@@ -1,0 +1,25 @@
+Oper 6 windows in cmd prompt and souce all for ROS:
+$ source /opt/ros/noetic/setup.bash
+
+
+$ source /opt/ros/noetic/setup.bash
+
+In thisago_public_ws ==> $ /Desktop/tiago_public_ws
+$ source devel/setup.bash
+$ roslaunch tiago_gazebo tiago_gazebo.launch public_sim:=true world:=simple_office_with_people
+
+
+In thesis_ws ==> $ cd /Desktop/thesis_ws
+  $ source devel/setup.bash
+  $ rosrun autonomous_controllers read_sensors.py
+-next:
+  $ source devel/setup.bash
+  $ rosrun autonomous_controllers collision_avoider.py 
+-next:
+  $ source devel/setup.bash
+  $ rosrun arbitration arbitrator.py
+
+
+In teleop_tools_ws    ==> cd ~/teleop_tools_ws
+$ source devel/setup.bash
+$ rosrun key_teleop key_teleop.py

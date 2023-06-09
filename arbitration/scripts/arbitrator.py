@@ -14,8 +14,12 @@ class Arbitrator():
 
 
     def main(self):
+        print('--------------------------')
         user_command = rospy.wait_for_message("autonomous_controllers/usr_cmd_vel", Twist, timeout=None)
+        print('User_command!')
         ca_command = rospy.wait_for_message("autonomous_controllers/ca_cmd_vel", Twist, timeout=None)
+        print('CA_command!')
+
         vel_cmd = blend_commands([self.alpha,1-self.alpha],[user_command,ca_command])
         self.pub.publish(vel_cmd)
         rospy.loginfo(vel_cmd)
