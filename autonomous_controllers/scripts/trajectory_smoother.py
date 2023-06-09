@@ -12,7 +12,7 @@ class Trajectory_smooter():
         self.n_actions = n_actions
         self.last_actions = deque([(0,0,0)]*n_actions,n_actions)
         self.rate=rospy.Rate(rate) # 10hz
-        self.pub = rospy.Publisher('mobile_base_controller/ts_cmd_vel', Twist, queue_size=10)
+        self.pub = rospy.Publisher('autonomous_controllers/ts_cmd_vel', Twist, queue_size=10)
         self.sub = rospy.Subscriber('mobile_base_controller/cmd_vel', Twist,self.callback)
 
     def main(self):

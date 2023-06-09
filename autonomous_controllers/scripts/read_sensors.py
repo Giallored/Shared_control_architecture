@@ -14,7 +14,9 @@ class Sensor():
         #self.laser_scanner=Fake_LaserScanner()
         self.tiago=TIAgo()
         self.scanner=FakeLaserScanner()
-        self.pub = rospy.Publisher('obstacle_poses', PoseArray, queue_size=10)
+        self.pub = rospy.Publisher('autonomous_controllers/obstacle_poses', PoseArray, queue_size=10)
+        self.rate=rospy.Rate(rate) # 10hz
+
 
 
     def main(self):
@@ -22,22 +24,16 @@ class Sensor():
         rospy.spin() # spin() simply keeps python from exiting until this node is stopped
 
     def callback(self,data):
-        tiago_pos = data.pose[-1].position
-        tiago_or = data.pose[-1].orientation
-        
-        self.tiago.set_MBpose(tiago_pos,tiago_or)
-        obs_ids= data.name[:-1]
-        obs_poses = data.pose[:-1]
-
-        obstacles = Obstacles(obs_ids,obs_poses)
+        tiago_pose,obstacles = get_msg_info(data)
+        self.tiago.set_MBpose(tiago_pose.position,tiago_pose.orientation)
         visible_obs_pos,visible_obs_id = self.scanner.get_visible_obs(self.tiago,obstacles)
-        #print(visible_obs_pos)
         obstacle_poses = PoseArray()
+        #obstacle_poses.append(tiago_pose)
         obstacle_poses.poses=visible_obs_pos
         self.pub.publish(obstacle_poses)
-        #print(len(visible_obs_id),'obstacles are visible')
-        #print(visible_obs_pos)
-        #print('------------------')
+        rospy.loginfo(obstacle_poses)
+        self.rate.sleep()
+
 
 
 class FakeLaserScanner():
@@ -149,7 +145,12 @@ def Pose2Homo(rot,trasl):
     M=np.row_stack((rot,[0,0,0]))
     return np.column_stack((M,p))
 
-
+def get_msg_info(msg):
+    tiago_pose = msg.pose[-1]
+    obs_ids= msg.name[:-1]
+    obs_poses = msg.pose[:-1]
+    obstacles = Obstacles(obs_ids,obs_poses)
+    return tiago_pose,obstacles
 
 
 
