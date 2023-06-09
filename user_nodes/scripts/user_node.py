@@ -6,7 +6,7 @@ import random
 import numpy as np
 
 def talker():
-    pub = rospy.Publisher('mobile_base_controller/cmd_vel', Twist, queue_size=10)
+    pub = rospy.Publisher('mobile_base_controller/usr_cmd_vel', Twist, queue_size=10)
     rospy.init_node('user', anonymous=True)
 
     rate = rospy.Rate(5) # 10hz

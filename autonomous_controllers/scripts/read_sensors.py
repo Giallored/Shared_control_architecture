@@ -18,6 +18,7 @@ class Sensor():
         self.rate=rospy.Rate(rate) # 10hz
 
 
+#PAOLO
 
     def main(self):
         rospy.Subscriber("/gazebo/model_states",ModelStates, self.callback)
