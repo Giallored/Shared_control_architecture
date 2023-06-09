@@ -9,7 +9,7 @@ import math
 
 
 class Collision_avoider():
-    def __init__(self, delta=0.6,K_lin=1,K_ang=0.1,rate=10):
+    def __init__(self, delta=0.6,K_lin=1,K_ang=1,rate=10):
         self.delta=delta
         self.K_lin=K_lin
         self.K_ang=K_ang
