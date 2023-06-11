@@ -1,43 +1,41 @@
-#!/usr/bin/python3
-
+#!/usr/bin/env python
 import rospy
+from nav_msgs.msg import OccupancyGrid
+from sensor_msgs.msg import LaserScan
+#from utils import FakeLaserScanner,Obstacles,TIAgo
+from gazebo_msgs.msg import ModelStates
+from geometry_msgs.msg import PoseArray,Pose
+import numpy as np
 from scipy.spatial.transform import Rotation
 
-class LaserScannato:
-    def __init__(
-        self,
-        time, frame_id,
-        angle_min, angle_max, angle_increment,
-        time_increment,
-        scan_time,
-        range_min, range_max,
-        ranges, intensities):
-        self.time            = time
-        self.frame_id        = frame_id
-        self.angle_min       = angle_min
-        self.angle_max       = angle_max
-        self.angle_increment = angle_increment
-        self.range_min       = range_min
-        self.range_max       = range_max
-        self.ranges          = ranges
-        self.intensities     = intensities
 
-    @staticmethod
-    def from_message(laser_scan_msg):
-        return LaserScan(
-            laser_scan_msg.header.stamp.to_sec(),
-            laser_scan_msg.header.frame_id,
-            laser_scan_msg.angle_min,
-            laser_scan_msg.angle_max,
-            laser_scan_msg.angle_increment,
-            laser_scan_msg.time_increment,
-            laser_scan_msg.scan_time,
-            laser_scan_msg.range_min,
-            laser_scan_msg.range_max,
-            laser_scan_msg.ranges,
-            laser_scan_msg.intensities
-        )
-    
+class Sensor():
+    def __init__(self, poly_degree=3, n_actions=20,rate=10):
+        #self.laser_scanner=Fake_LaserScanner()
+        self.tiago=TIAgo()
+        self.scanner=FakeLaserScanner()
+        self.pub = rospy.Publisher('autonomous_controllers/obstacle_poses', PoseArray, queue_size=10)
+        self.rate=rospy.Rate(rate) # 10hz
+
+
+
+    def main(self):
+        rospy.Subscriber("/gazebo/model_states",ModelStates, self.callback)
+        rospy.spin() # spin() simply keeps python from exiting until this node is stopped
+
+    def callback(self,data):
+        tiago_pose,obstacles = get_msg_info(data)
+        self.tiago.set_MBpose(tiago_pose.position,tiago_pose.orientation)
+        visible_obs_pos,visible_obs_id = self.scanner.get_visible_obs(self.tiago,obstacles)
+        obstacle_poses = PoseArray()
+        #obstacle_poses.append(tiago_pose)
+        obstacle_poses.poses=visible_obs_pos
+        self.pub.publish(obstacle_poses)
+        rospy.loginfo(obstacle_poses)
+        self.rate.sleep()
+
+
+
 class FakeLaserScanner():
     def __init__(
         self, 
@@ -58,13 +56,10 @@ class FakeLaserScanner():
         for id in obs_ids:
             obs_i = obstacles.dict[id]
             is_visible,rel_pos_i = self.check_visibility(tiago,obs_i)
-    
             if is_visible:
-                visible_obs_pos.append(rel_pos_i)
+                visible_obs_pos.append(list_to_pose(rel_pos_i,[0]*4))
                 visible_obs_id.append(id)
-            #if range_i>=self.range_min and range_i<=self.range_max:
-            #    rel_pos_i = homoProd(tiago.Tf_tiago_w,pos_i)
-            #    rel_pos.append(rel_pos_i)
+            
         return visible_obs_pos,visible_obs_id
     
     def check_visibility(self,tiago,obs):
@@ -126,7 +121,7 @@ class Object():
 def homoProd(Tf,vec3):
     vec4 = np.append(vec3,[1])
     prod = np.dot(Tf,vec4)
-    return prod[:-2]
+    return prod[:-1]
     
 
 def Vec3_to_list(vector):
@@ -134,12 +129,37 @@ def Vec3_to_list(vector):
 def Vec4_to_list(vector):
     return [vector.x,vector.y,vector.z,vector.w]
 
+def list_to_pose(position,orientation):
+    pose=Pose()
+    pose.position.x = position[0]
+    pose.position.y = position[1]
+    pose.position.z = position[2]
+    pose.orientation.x = orientation[0]
+    pose.orientation.y = orientation[1]
+    pose.orientation.z = orientation[2]
+    pose.orientation.w = orientation[3]
+    return pose
+
 def Pose2Homo(rot,trasl):
     p=np.append(trasl,[1])
     M=np.row_stack((rot,[0,0,0]))
     return np.column_stack((M,p))
 
+def get_msg_info(msg):
+    tiago_pose = msg.pose[-1]
+    obs_ids= msg.name[:-1]
+    obs_poses = msg.pose[:-1]
+    obstacles = Obstacles(obs_ids,obs_poses)
+    return tiago_pose,obstacles
 
 
 
 
+
+if __name__ == '__main__':
+    try:
+        rospy.init_node('sensor_node', anonymous=True)
+        sensor = Sensor()
+        sensor.main()
+    except rospy.ROSInterruptException:
+        pass

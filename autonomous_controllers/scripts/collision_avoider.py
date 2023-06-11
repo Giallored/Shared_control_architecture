@@ -6,6 +6,11 @@ import random
 import numpy as np
 from geometry_msgs.msg import PoseArray,Pose
 import math
+from sensor_msgs.msg import PointCloud2
+#from point_cloud2 import read_points
+from auto_controller.utils import say_it_works
+
+#from autonomous_controllers.utils import  FakeLaserScanner
 
 
 class Collision_avoider():
@@ -17,16 +22,33 @@ class Collision_avoider():
         self.rate=rospy.Rate(rate) # 10hz
 
     def main(self):
-        rospy.Subscriber("autonomous_controllers/obstacle_poses",PoseArray, self.callback)
+        rospy.Subscriber("autonomous_controllers/obs_pos",PointCloud2, self.callback)
+        #data=rospy.wait_for_message("autonomous_controllers/obs_pos", PoseArray, timeout=None)
+        #print(data)
+        
         rospy.spin() # spin() simply keeps python from exiting until this node is stopped
 
     def callback(self,data):
-        obs_poses=data.poses
-        closest_obs_pos, closest_obs_distance = self.get_closest_obs(obs_poses)
-        vel_cmd = self.compute_vel_cmd(closest_obs_pos,closest_obs_distance)
-        self.pub.publish(vel_cmd)
-        rospy.loginfo(vel_cmd)
-        self.rate.sleep()
+        for data in read_points(data, skip_nans=True):
+            print([data[0], data[1], data[2], data[3]])
+        #points =data
+        #print(data.data)
+        #magnitudes=[np.linalg.norm(point) for point in points]
+        #cls_p_id = np.min(magnitudes)
+        #cls_point= points(cls_p_id)
+        #cls_p_dist= magnitudes(cls_p_id)
+        #print('cls_point: ',cls_point)
+        #print('cls_p_dist: ',cls_p_dist)
+
+
+
+
+        #obs_poses=data.poses
+        #closest_obs_pos, closest_obs_distance = self.get_closest_obs(obs_poses)
+        #vel_cmd = self.compute_vel_cmd(closest_obs_pos,closest_obs_distance)
+        #self.pub.publish(vel_cmd)
+        #rospy.loginfo(vel_cmd)
+        #self.rate.sleep()
         #print('real command = ',vel_cmd)
 
 
@@ -54,10 +76,6 @@ class Collision_avoider():
         #print('command = ',cmd)
         return cmd
 
-
-
-
-
 def Vec3_to_list(vector):
     return [vector.x,vector.y,vector.z]
 def Vec4_to_list(vector):
@@ -77,8 +95,11 @@ def list_to_twist(l):
 
 if __name__ == '__main__':
     try:
-        rospy.init_node('CA_node', anonymous=True)
-        node = Collision_avoider()
-        node.main()
+        rospy.init_node('test_node')
+        say_it_works()
+
+        #rospy.init_node('CA_node', anonymous=True)
+        #node = Collision_avoider()
+        #node.main()
     except rospy.ROSInterruptException:
         pass
