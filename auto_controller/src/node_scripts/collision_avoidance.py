@@ -7,49 +7,57 @@ import numpy as np
 from geometry_msgs.msg import PoseArray,Pose
 import math
 from sensor_msgs.msg import PointCloud2
-#from point_cloud2 import read_points
-from auto_controller.utils import say_it_works
+from auto_controller.point_cloud2 import read_points
+from auto_controller.utils import FakeLaserScanner
+from std_msgs.msg import Bool
 
 #from autonomous_controllers.utils import  FakeLaserScanner
 
 
 class Collision_avoider():
-    def __init__(self, delta=0.6,K_lin=1,K_ang=5,rate=10):
+    def __init__(self, delta=0.6,K_lin=0.,K_ang=10.,rate=10):
         self.delta=delta
         self.K_lin=K_lin
         self.K_ang=K_ang
         self.pub = rospy.Publisher('autonomous_controllers/ca_cmd_vel', Twist, queue_size=10)
+        self.pub_request = rospy.Publisher('autonomous_controllers/scan_request', Bool, queue_size=1)
+        self.queue_is_empty=True
+        self.cnt_points=0
         self.rate=rospy.Rate(rate) # 10hz
 
     def main(self):
-        rospy.Subscriber("autonomous_controllers/obs_pos",PointCloud2, self.callback)
-        #data=rospy.wait_for_message("autonomous_controllers/obs_pos", PoseArray, timeout=None)
-        #print(data)
-        
-        rospy.spin() # spin() simply keeps python from exiting until this node is stopped
+        while not rospy.is_shutdown():
+            request = rospy.wait_for_message("autonomous_controllers/request_cmd",Bool, timeout=None)
+            self.pub_request.publish(Bool())
+            rospy.Subscriber("autonomous_controllers/obs_pos",PointCloud2, self.callback)
 
     def callback(self,data):
+        #print('Scan received!')
+        min_distace=999999999
+        cls_point = [0,0]
+        cnt=0
         for data in read_points(data, skip_nans=True):
-            print([data[0], data[1], data[2], data[3]])
-        #points =data
-        #print(data.data)
-        #magnitudes=[np.linalg.norm(point) for point in points]
-        #cls_p_id = np.min(magnitudes)
-        #cls_point= points(cls_p_id)
-        #cls_p_dist= magnitudes(cls_p_id)
-        #print('cls_point: ',cls_point)
-        #print('cls_p_dist: ',cls_p_dist)
-
-
-
-
-        #obs_poses=data.poses
-        #closest_obs_pos, closest_obs_distance = self.get_closest_obs(obs_poses)
-        #vel_cmd = self.compute_vel_cmd(closest_obs_pos,closest_obs_distance)
-        #self.pub.publish(vel_cmd)
-        #rospy.loginfo(vel_cmd)
-        #self.rate.sleep()
-        #print('real command = ',vel_cmd)
+            cnt+=1
+            point=[data[0], data[1]]#, data[2], data[3]]
+            distance = np.linalg.norm(point)
+            if distance<min_distace and distance > 0.0:
+                min_distace=distance
+                cls_point=point
+                cls_id = cnt
+        print('--->cls_point is: ',cls_point,'at index ',cls_id)
+        obs_dir = np.subtract(cls_point,[0,0])
+        repulsive_dir = -obs_dir/np.linalg.norm(obs_dir)
+        repulsive_vel = self.K_lin*repulsive_dir
+        repulsive_angle=np.arctan2(repulsive_dir[1],repulsive_dir[0])
+        
+        linear_vel_cmd = np.linalg.norm(repulsive_vel)
+        angular_vel_cmd = self.K_ang*repulsive_angle
+        vel_cmd = Twist()
+        vel_cmd.linear.x=linear_vel_cmd
+        vel_cmd.angular.z=angular_vel_cmd
+        self.pub.publish(vel_cmd)
+        self.queue_is_empty=False
+        self.rate.sleep()
 
 
     def get_closest_obs(self,obs_poses):
@@ -95,11 +103,8 @@ def list_to_twist(l):
 
 if __name__ == '__main__':
     try:
-        rospy.init_node('test_node')
-        say_it_works()
-
-        #rospy.init_node('CA_node', anonymous=True)
-        #node = Collision_avoider()
-        #node.main()
+        rospy.init_node('CA_node', anonymous=True)
+        node = Collision_avoider()
+        node.main()
     except rospy.ROSInterruptException:
         pass

@@ -5,52 +5,73 @@ from geometry_msgs.msg import Twist
 import random
 import numpy as np
 from collections import deque
+from std_msgs.msg import Bool
 
 class Trajectory_smooter():
     def __init__(self, poly_degree=3, n_actions=20,rate=10):
         self.poly_degree = poly_degree
         self.n_actions = n_actions
-        self.last_actions = deque([(0,0,0)]*n_actions,n_actions)
+        self.last_actions = deque([(0,0,0)]*n_actions,n_actions) #(time,v,omega)
         self.rate=rospy.Rate(rate) # 10hz
-        self.pub = rospy.Publisher('autonomous_controllers/ts_cmd_vel', Twist, queue_size=10)
+        self.pub = rospy.Publisher('autonomous_controllers/ts_cmd_vel', Twist, queue_size=1)
         self.sub = rospy.Subscriber('mobile_base_controller/cmd_vel', Twist,self.callback)
 
     def main(self):
-        rospy.init_node('trajectory_smoother', anonymous=True)
+        print(rospy.get_time())
+        self.previous_time = rospy.get_time()
+
         while not rospy.is_shutdown():
-            self.sub()
+            rospy.Subscriber('aribitration/request_cmd',Bool,self.callback)
 
-    def fit_polynomial(self):
-        timesteps = np.array(range(0,self.n_actions))*1.0
-        next_timestep = self.n_actions+1
 
-        positions = np.array(list(self.last_actions)[:,0:1])
-        l_poly = np.polyfit(timesteps, positions, self.poly_degree)
-        linear_poly = np.poly2d(l_poly)
+    def fit_polynomial(self,dt):
+        timesteps = self.last_actions[:,0]
+        next_time = timesteps[-1]+dt 
 
-        angles = np.array(list(self.last_actions)[:,2])
-        a_poly = np.polyfit(timesteps, angles, self.poly_degree)
-        angular_poly = np.poly1d(a_poly)
-        return list_to_twist([linear_poly[next_timestep]]+[angular_poly[next_timestep]])
+        v_cmds = self.last_actions[:,1]
+        v_poly = np.polyfit(timesteps, v_cmds, self.poly_degree)
+        new_v_cmd=np.poly1d(v_poly)[next_time]
+
+        om_cmds = self.last_actions[:,2]
+        om_poly = np.polyfit(timesteps, om_cmds, self.poly_degree)
+        new_om_cmd = np.poly1d(om_poly)
+
+        return list_to_twist([new_v_cmd,0,0]+[0,0,new_om_cmd])
 
 
     def callback(self,data):
-        new_action = twist_to_list(data.data)
-        self.last_actions.append(new_action)
-        next_command = self.fit_polynomial()
+        print('Request!')
+        current_time = rospy.get_time()
+        dt = current_time - self.previous_time
+        next_command = self.fit_polynomial(dt)
         self.pub.publish(next_command)
+        print('Request satisfied!')
         self.rate.sleep()
-        rospy.loginfo(self.next_command)
+        final_vel_cmd = rospy.wait_for_message('mobile_base_controller/cmd_vel',Twist,timeout=None)
+        self.store_action(final_vel_cmd)
+
+    def store_action(self,data):
+        time = rospy.get_time()
+        action = twist_to_act(data.data)
+        v = action[0]
+        om = action[1]
+        self.last_actions.append((time,v,om))
 
 
-def twist_to_list(twist_msg):
-    return [twist_msg.linear.x,twist_msg.linear.y,twist_msg.angular.z]
 
-def list_to_twist(l):
+
+def twist_to_act(twist_msg):
+    return [twist_msg.linear.x,twist_msg.angular.z]
+
+def list_to_twist(linear,angular):
     vel_command = Twist()
-    vel_command.linear.x = l[0]
-    vel_command.linear.y = l[1]
-    vel_command.angular.z = l[2]
+    vel_command.linear.x = linear[0]
+    vel_command.linear.y = linear[1]
+    vel_command.linear.z = linear[2]
+
+    vel_command.angular.x = angular[0]
+    vel_command.angular.y = angular[1]
+    vel_command.angular.z = angular[2]
     return vel_command
 
 
@@ -66,7 +87,9 @@ def get_rando_commands(vel_command):
 
 if __name__ == '__main__':
     try:
-        trajectory_smooter()
-        trajectory_smooter.main()
+        rospy.init_node('trajectory_smoother', anonymous=True)
+
+        node =Trajectory_smooter()
+        node.main()
     except rospy.ROSInterruptException:
         pass

@@ -14,7 +14,7 @@ class Sensor():
         #self.laser_scanner=Fake_LaserScanner()
         self.tiago=TIAgo()
         self.scanner=FakeLaserScanner()
-        self.pub = rospy.Publisher('autonomous_controllers/obstacle_poses', PoseArray, queue_size=10)
+        self.pub = rospy.Publisher('autonomous_controllers/obstacle_poses', PoseArray, queue_size=1)
         self.rate=rospy.Rate(rate) # 10hz
 
 
