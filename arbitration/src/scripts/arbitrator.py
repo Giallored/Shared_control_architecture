@@ -4,67 +4,46 @@ import rospy
 from geometry_msgs.msg import Twist
 import numpy as np
 from geometry_msgs.msg import PoseArray,Pose
-from std_msgs.msg import Bool
-#from arbitration.utils import *
+from std_msgs.msg import Bool,Float64MultiArray
+from std_srvs.srv import Empty
+#from arbitration.utils import list_to_twist
+from utils.utils import list_to_twist
 
+
+#from auto_controller.utils import list_to_twist
+ 
 
 class Arbitrator():
     def __init__(self, alpha=0.6,rate=10):
         self.alpha=alpha
-        self.pub = rospy.Publisher('mobile_base_controller/cmd_vel', Twist, queue_size=10)
-        self.pub_request=rospy.Publisher('aribitration/request_cmd',Bool, Twist, queue_size=10)
+        self.reset_sim = rospy.ServiceProxy('/gazebo/reset_world', Empty) #resets the simulation
+        self.steps=0
+        self.max_steps = 100
+        self.pub_cmd = rospy.Publisher('mobile_base_controller/cmd_vel', Twist, queue_size=1)
+        self.pub=rospy.Publisher('request_cmd',Bool, queue_size=1)
         self.rate=rospy.Rate(rate) # 10hz
 
 
     def main(self):
-        while not rospy.is_shutdown():
-            self.pub_request.publish(Bool())
+        print('Arbitration node is ready!')
+        self.reset_sim()
+        rospy.Subscriber('autonomous_controllers/ts_cmd_vel', Float64MultiArray,self.callback)
+        rospy.spin()
+        
+    
+    def callback(self,data):
+        self.steps +=1
+        cmd = data.data
+        n_agents = data.layout.dim[0].size
+        v_cmd,om_cmd = blend_commands([1,1,1],cmd)
+        msg = list_to_twist([v_cmd,0,0],[0,0,om_cmd])
+        print('step_cnt = ',self.steps,' ---->  cmd [t =', rospy.get_time(),',] = ',[v_cmd,om_cmd])
+        self.pub_cmd.publish(msg)
+        self.pub.publish(Bool())
+        if self.steps%self.max_steps ==0: self.reset_sim()
             
-            print('--------------------------')
-            usr_cmd = rospy.wait_for_message("usr_cmd_vel", Twist, timeout=None)
-            print(' - v_usr =',usr_cmd.linear.x)
-            print(' - om_usr =',usr_cmd.angular.z)
-            print('.')
 
-            #print('User_cmd!')
-            #print(usr_cmd)
-            #ca_cmd = rospy.wait_for_message("autonomous_controllers/ca_cmd_vel", Twist, timeout=None)
-            #print(' - v_ca =',ca_cmd.linear.x)
-            #print(' - om_ca =',ca_cmd.angular.z)
-            #print('.')
-
-            #print('CA_cmd!')
-            #print(ca_cmd)
-            ts_cmd = rospy.wait_for_message("autonomous_controllers/ts_cmd_vel", Twist, timeout=None)
-            print(' - v_ts =',ts_cmd.linear.x)
-            print(' - om_ts =',ts_cmd.angular.z)
-            print('.')
-
-            vel_cmd = blend_commands([1,1],[usr_cmd,ts_cmd])
-            print('FINAL_ts =',vel_cmd.linear.x)
-            print('FINAL_ts =',vel_cmd.angular.z)
-            #self.pub.publish(vel_cmd)
-            #rospy.loginfo(vel_cmd)
-            #self.rate.sleep()
-
-
-
-def Vec3_to_list(vector):
-    return [vector.x,vector.y,vector.z]
-def Vec4_to_list(vector):
-    return [vector.x,vector.y,vector.z,vector.w]
-
-def twist_to_list(twist_msg):
-    return [twist_msg.linear.x,twist_msg.linear.y,twist_msg.angular.z]
-
-def list_to_twist(l):
-    vel_command = Twist()
-    vel_command.linear.x = l[0]
-    vel_command.linear.y = l[1]
-    vel_command.angular.z = l[2]
-    return vel_command
-
-def blend_commands(w_list,cmd_list):
+def blend_twist_commands(w_list,cmd_list):
     cmd = Twist()
     for w,c in zip(w_list,cmd_list):
         cmd.linear.x +=w*c.linear.x
@@ -75,6 +54,25 @@ def blend_commands(w_list,cmd_list):
         cmd.angular.z+=w*c.angular.z
         #cmd.angular.w+=w*c.angular.w
     return cmd
+
+def blend_commands(w_list,cmd_list,n=3):
+    cmds = np.array_split(cmd_list, n)
+    v=0
+    om=0
+    for i in range(n):
+        w_i = w_list[i]
+        v_i = cmds[i][0]
+        v = v_i*w_i
+        om_i = cmds[i][1]
+        om+=w_i*om_i
+    return v,om
+
+def devide_cmd(cmd,dim):
+    n = dim[0]
+    l = dim[1]
+    for i in range(n):
+        cmd_i = cmd[n,n+1]
+
 
 
 if __name__ == '__main__':

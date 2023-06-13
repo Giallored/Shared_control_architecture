@@ -6,6 +6,8 @@ import numpy as np
 from geometry_msgs.msg import PoseArray,Pose
 import math
 from scipy.spatial.transform import Rotation
+from std_msgs.msg import Bool,Float64MultiArray,MultiArrayLayout,MultiArrayDimension,Float64
+
 
     
 class FakeLaserScanner():
@@ -109,15 +111,53 @@ def Pose2Homo(rot,trasl):
     M=np.row_stack((rot,[0,0,0]))
     return np.column_stack((M,p))
 
+
 def twist_to_list(twist_msg):
     return [twist_msg.linear.x,twist_msg.linear.y,twist_msg.angular.z]
 
-def list_to_twist(l):
-    vel_command = Twist()
-    vel_command.linear.x = l[0]
-    vel_command.linear.y = l[1]
-    vel_command.angular.z = l[2]
-    return vel_command
+def twist_to_act(twist_msg):
+    return [twist_msg.linear.x,twist_msg.angular.z]
+
+def list_to_twist(linear,angular):
+    msg = Twist()
+    msg.linear.x = linear[0]
+    msg.linear.y = linear[1]
+    msg.linear.z = linear[2]
+    msg.angular.x = angular[0]
+    msg.angular.y = angular[1]
+    msg.angular.z = angular[2]
+    return msg
+
+
+def blend_commands(w_list,cmd_list):
+    cmd = Twist()
+    for w,c in zip(w_list,cmd_list):
+        cmd.linear.x +=w*c.linear.x
+        cmd.linear.y +=w*c.linear.y
+        cmd.linear.z +=w*c.linear.z
+        cmd.angular.x+=w*c.angular.x
+        cmd.angular.y+=w*c.angular.y
+        cmd.angular.z+=w*c.angular.z
+        #cmd.angular.w+=w*c.angular.w
+    return cmd
+
+def to_array_msg(cmd,dim):
+    layout = MultiArrayLayout()
+    layout.dim.append(MultiArrayDimension(size=dim[0]))
+    layout.dim.append(MultiArrayDimension(size=dim[1]))
+    msg=Float64MultiArray(layout=layout)
+    for c in cmd:
+        msg.data.append(c)
+    #msg.data.append(2)
+    #msg.data = Float64.data
+
+        #try:
+        #    msg.data.append(cmd[i])
+        #except:
+        #    msg.data.append([0.]*dim[0])
+    return msg
+    
+    
 
 
 

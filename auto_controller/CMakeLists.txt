@@ -161,6 +161,7 @@ include_directories(
    src/node_scripts/read_sensors.py
    src/node_scripts/trajectory_smoother.py
    src/node_scripts/collision_avoidance.py
+   src/node_scripts/controller.py
 
    DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION}
  )
