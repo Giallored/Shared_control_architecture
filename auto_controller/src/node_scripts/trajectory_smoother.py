@@ -14,15 +14,12 @@ class Trajectory_smooter():
         self.n_actions = n_actions
         self.previous_time=0
         self.last_actions = deque([],n_actions) #(time,v,omega)
-        for i in range(self.n_actions): self.last_actions.append([i*0.01,0,0])
+        for i in range(self.n_actions): self.last_actions.append([i*0.1,0,0])
         self.pub = rospy.Publisher('autonomous_controllers/ts_cmd_vel', Float64MultiArray, queue_size=10)
-
-        #self.pub = rospy.Publisher('autonomous_controllers/ts_cmd_vel', Twist, queue_size=1)
         self.rate=rospy.Rate(rate) # 10hz
 
     def main(self):
         print('TS node is ready!')
-        #rospy.Subscriber('request_cmd',Bool,self.callback)
         rospy.Subscriber('autonomous_controllers/ca_cmd_vel', Float64MultiArray,self.callback)
         rospy.Subscriber('mobile_base_controller/cmd_vel', Twist,self.store_action)        
         rospy.spin()
@@ -34,6 +31,7 @@ class Trajectory_smooter():
         dt = current_time - self.previous_time
         ts_cmd = self.fit_polynomial(dt)
         print('cmd [t =', rospy.get_time(),'] = ',ts_cmd)
+        print('-')
         cmd+=ts_cmd
         msg = to_array_msg(cmd,dim=[3,2])
         self.pub.publish(msg)
@@ -63,6 +61,7 @@ class Trajectory_smooter():
         om = action[1]
         self.last_actions.append((time,v,om))
         print('User action stored : ',action)
+
 
 
 

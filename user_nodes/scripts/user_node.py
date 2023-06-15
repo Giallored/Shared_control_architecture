@@ -5,14 +5,15 @@ from geometry_msgs.msg import Twist
 import random
 from std_msgs.msg import Bool,Float64MultiArray,MultiArrayLayout
 from auto_controller.utils import to_array_msg
+from SC_navigation.utils import cmd_to_twist
 
 
 
 class User():
     
     def __init__(self,rate=10):
-        #self.pub_user_cmd = rospy.Publisher('usr_cmd_vel', Twist, queue_size=1)
-        self.pub = rospy.Publisher('usr_cmd_vel', Float64MultiArray, queue_size=1)
+        self.pub = rospy.Publisher('usr_cmd_vel', Twist, queue_size=1)
+        #self.pub = rospy.Publisher('usr_cmd_vel', Float64MultiArray, queue_size=1)
         self.linear_cmds = [0.8,0.0,-0.8]
         self.angular_cmds = [0.5,0.0,-0.5]
         #self.vel_cmd = Twist()
@@ -28,8 +29,10 @@ class User():
         cmd = []
         cmd.append(random.sample(self.linear_cmds ,1)[0])
         cmd.append(random.sample(self.angular_cmds,1)[0])
+
         print('cmd [t =', rospy.get_time(),'] = ',cmd)
-        msg = to_array_msg(cmd,dim=[1,2])
+        #msg = to_array_msg(cmd,dim=[1,2])
+        msg=cmd_to_twist(cmd)
         self.pub.publish(msg)
         #self.vel_cmd.linear.x= random.sample(self.linear_cmds ,1)[0]
         #self.vel_cmd.angular.z=random.sample(self.angular_cmds,1)[0]

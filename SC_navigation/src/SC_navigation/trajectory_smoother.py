@@ -50,4 +50,4 @@ class Trajectory_smooter():
         #normalize actions
         min_time = self.last_actions[0][0]
         for i in range(self.n_actions): self.last_actions[i][0]=self.last_actions[i][0]-min_time
-        print('User action stored : ',action)
+        #print('User action stored : ',action)

@@ -39,6 +39,16 @@ class Collision_avoider():
     def callback(self,data):
         cmd = list(data.data)
         scan_msg = self.get_scan()
+        cls_point = self.compute_cls_point(scan_msg)
+
+        ca_cmd =self.compute_vel_cmd(cls_point) 
+        print('cmd [t =', rospy.get_time(),'] = ',ca_cmd)
+        cmd_new= cmd+ca_cmd
+        msg = to_array_msg(cmd,dim=[2,2])
+        self.pub.publish(msg)
+        self.rate.sleep()
+
+    def compute_cls_point(self,scan_msg):
         min_distace=999999999
         cls_point = [0,0]
         for p in read_points(scan_msg, skip_nans=True):
@@ -47,13 +57,8 @@ class Collision_avoider():
             if distance<min_distace and distance > 0.0:
                 min_distace=distance
                 cls_point=point
+            return cls_point
 
-        ca_cmd =self.compute_vel_cmd(cls_point) 
-        print('cmd [t =', rospy.get_time(),'] = ',ca_cmd)
-        cmd+=ca_cmd
-        msg = to_array_msg(cmd,dim=[2,2])
-        self.pub.publish(msg)
-        self.rate.sleep()
     
     def get_scan(self):
         scan_msg=rospy.wait_for_message("scan_raw",LaserScan, timeout=None)
@@ -67,9 +72,6 @@ class Collision_avoider():
         repulsive_vel = self.K_lin*repulsive_dir
         repulsive_angle=np.arctan2(repulsive_dir[1],repulsive_dir[0])
         vel_cmd = [np.linalg.norm(repulsive_vel),self.K_ang*repulsive_angle]
-        #vel_cmd = Twist()
-        #vel_cmd.linear.x=np.linalg.norm(repulsive_vel)
-        #vel_cmd.angular.z= self.K_ang*repulsive_angle
         return vel_cmd
 
 

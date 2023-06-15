@@ -1,5 +1,6 @@
 import rospy
 from geometry_msgs.msg import Twist
+import numpy as np
 
 
 
@@ -11,21 +12,24 @@ def Vec4_to_list(vector):
 def twist_to_list(twist_msg):
     return [twist_msg.linear.x,twist_msg.linear.y,twist_msg.angular.z]
 
-def list_to_twist(l):
-    vel_command = Twist()
-    vel_command.linear.x = l[0]
-    vel_command.linear.y = l[1]
-    vel_command.angular.z = l[2]
-    return vel_command
+def list_to_twist(linear,angular):
+    msg = Twist()
+    msg.linear.x = linear[0]
+    msg.linear.y = linear[1]
+    msg.linear.z = linear[2]
+    msg.angular.x = angular[0]
+    msg.angular.y = angular[1]
+    msg.angular.z = angular[2]
+    return msg
 
-def blend_commands(w_list,cmd_list):
-    cmd = Twist()
-    for w,c in zip(w_list,cmd_list):
-        cmd.linear.x +=w*c.linear.x
-        cmd.linear.y +=w*c.linear.y
-        cmd.linear.z +=w*c.linear.z
-        cmd.angular.x+=w*c.angular.x
-        cmd.angular.y+=w*c.angular.y
-        cmd.angular.z+=w*c.angular.z
-        #cmd.angular.w+=w*c.angular.w
-    return cmd
+def blend_commands(w_list,cmd_list,n=3):
+    cmds = np.array_split(cmd_list, n)
+    v=0
+    om=0
+    for i in range(n):
+        w_i = w_list[i]
+        v_i = cmds[i][0]
+        v = v_i*w_i
+        om_i = cmds[i][1]
+        om+=w_i*om_i
+    return v,om

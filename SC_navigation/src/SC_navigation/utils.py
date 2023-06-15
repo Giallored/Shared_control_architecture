@@ -1,7 +1,30 @@
 import rospy
 from geometry_msgs.msg import Twist
 import numpy as np
+from scipy.spatial.transform import Rotation
+import time
 
+class TIAgo():
+    def __init__(self, mb_position=[0.,0.,0.],mb_orientation=[0.,0.,0.]):
+        self.mb_position=mb_position # wrt RFworld
+        self.mb_orientation=mb_orientation # wrt RFworld
+        self.clearance = 0.20
+        self.Tf_tiago_w = np.zeros((4,4))
+
+    def set_MBpose(self,pose):
+        self.mb_position=Vec3_to_list(pose.position)
+        #turn orientation from quat to euler (in rad)
+        rot = Rotation.from_quat(Vec4_to_list(pose.orientation))
+        self.Tf_tiago_w = Pose2Homo(rot.as_matrix(),self.mb_position)
+        self.mb_orientation=rot.as_euler('xyz', degrees=False)
+
+    def get_MBpose(self):
+        return self.mb_position+self.mb_position
+
+def Pose2Homo(rot,trasl):
+    p=np.append(trasl,[1])
+    M=np.row_stack((rot,[0,0,0]))
+    return np.column_stack((M,p))
 
 
 def Vec3_to_list(vector):
@@ -46,12 +69,16 @@ def blend_commands(w_list,cmd_list,n=3):
 def compute_cls_obs(obs_list):
         min_distace=999999999
         cls_point = [0,0]
+        cls_id = 0
+        cnt=0
         for obs in obs_list:
             distance = np.linalg.norm(obs)
             if distance<min_distace and distance > 0.0:
                 min_distace=distance
                 cls_obs=obs
-            return cls_obs,min_distace
+                cls_id=cnt
+            cnt+=1
+        return cls_obs,min_distace
         
         
 def from_cmd_msg(msg):
@@ -60,3 +87,10 @@ def from_cmd_msg(msg):
     ca_cmd = cmds[1]
     ts_cmd = cmds[2]
     return usr_cmd,ca_cmd,ts_cmd
+
+
+def countdown(n):
+    for i in (range(n,0,-1)): 
+        print(f"{i}", end="\r", flush=True)
+        time.sleep(1)
+    print('GO!')
