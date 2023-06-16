@@ -15,7 +15,7 @@ class Environment():
                  n_agents=3,
                  delta=1,
                  max_steps=1000,
-                 verbosity=True
+                 verbosity=False
                  ):
         self.n_agents=n_agents
         self.delta = delta
@@ -59,15 +59,16 @@ class Environment():
         self.n_states = len(self.cur_observation)
         
         # read the model state to get the tiango and obstacle pose
-        self.obj_dict = self.get_sim_info()
+        self.obj_dict = get_sim_info()
         tiago_pose = self.obj_dict['tiago']
         self.tiago.set_MBpose(tiago_pose)
         obs_ids = list(self.obj_dict.keys())
         obs_ids.remove('tiago')
+
         
         # get the current goal random
-        self.goal_id = random.sample(obs_ids,1)[0]
-        self.goal_pos = Vec3_to_list(self.obj_dict[self.goal_id].position)
+        #self.goal_id = random.sample(obs_ids,1)[0]
+        #self.goal_pos = Vec3_to_list(self.obj_dict[self.goal_id].position)
 
 
     def reset(self):
@@ -83,29 +84,18 @@ class Environment():
 
     def update(self):
         #print('UPDATE')
-        self.obj_dict = self.get_sim_info()
+        self.obj_dict = get_sim_info()
         self.goal_pos = Vec3_to_list(self.obj_dict[self.goal_id].position)
         self.tiago.set_MBpose(self.obj_dict['tiago'])        
         self.time = rospy.get_time()
         self.cur_observation = self.laserScanner.get_obs_points()
+        self.set_goal_dist()
 
-
-    def get_sim_info(self):
-        ms_msg = rospy.wait_for_message("/gazebo/model_states",ModelStates, timeout=None)
-        ids = ms_msg.name
-        poses = ms_msg.pose
-        #tiago_i = ids.index('tiago')
-        #ids.remove('tiago_i')
-        #tiago_pose = poses.pop(tiago_i)
-        dict = {}
-        for id,pos in zip(ids,poses): dict[id]=pos
-        
-        return dict
 
     def get_response(self):
         observation = self.cur_observation
-        reward = self.env.get_reward()
-        if self.step>=self.max_steps:
+        reward = self.get_reward()
+        if self.goal_dist<=self.delta:# or  self.step>=self.max_steps:
             done=True
         else:
             done = False
@@ -118,7 +108,7 @@ class Environment():
         self.cur_cmd = cmd
 
 
-    def get_rewards(self):
+    def get_reward(self):
         # safety oriented
         cls_obs,min_dist = compute_cls_obs(self.cur_observation)
         if min_dist>=self.delta:
@@ -135,9 +125,8 @@ class Environment():
         r_cmd = self.R_cmd*np.linalg.norm(np.subtract(self.cur_cmd,self.cur_usr_cmd))
 
         # Goal oriented
-        goal_dist = np.linalg.norm(np.subtract(self.goal_pos,self.tiago.mb_position))
-        r_goal = self.R_goal*goal_dist
-        if goal_dist<=self.delta:
+        r_goal = self.R_goal*self.goal_dist
+        if self.goal_dist<=self.delta:
             r_end = self.R_end
         else:
             r_end=0
@@ -152,6 +141,23 @@ class Environment():
             print('Tot rewards:',reward)
 
         return reward
+    
+    def get_goal_dist(self):
+        goal_dist = np.linalg.norm(np.subtract(self.goal_pos,self.tiago.mb_position))
+        return goal_dist
+
+    def set_goal_dist(self):
+        self.goal_dist = np.linalg.norm(np.subtract(self.goal_pos,self.tiago.mb_position))
+
+    
+    def set_goal(self,goal_id:str):
+        self.goal_id=goal_id
+        try:
+            self.goal_pos = Vec3_to_list(self.obj_dict[self.goal_id].position)
+        except rospy.ROSInterruptException:
+            pass
+        
+
 
 
 

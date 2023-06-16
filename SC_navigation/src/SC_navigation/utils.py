@@ -3,6 +3,8 @@ from geometry_msgs.msg import Twist
 import numpy as np
 from scipy.spatial.transform import Rotation
 import time
+from gazebo_msgs.msg import ModelStates
+
 
 class TIAgo():
     def __init__(self, mb_position=[0.,0.,0.],mb_orientation=[0.,0.,0.]):
@@ -19,12 +21,22 @@ class TIAgo():
         self.mb_orientation=rot.as_euler('xyz', degrees=False)
 
     def get_MBpose(self):
-        return self.mb_position+self.mb_position
+        return self.mb_position,self.mb_position
+    
+    def get_relative_pos(self,obj_pos):
+        pos = obj_pos+[1]
+        rel_pos = np.dot(np.linalg.inv(self.Tf_tiago_w),pos)
+        rel_pos=rel_pos[:-1]
+        return rel_pos
 
 def Pose2Homo(rot,trasl):
     p=np.append(trasl,[1])
     M=np.row_stack((rot,[0,0,0]))
     return np.column_stack((M,p))
+
+def quat2euler(quat):
+    rot = Rotation.from_quat(quat)
+    return rot.as_euler('xyz', degrees=False)
 
 
 def Vec3_to_list(vector):
@@ -94,3 +106,23 @@ def countdown(n):
         print(f"{i}", end="\r", flush=True)
         time.sleep(1)
     print('GO!')
+
+
+
+def get_sim_info():
+    ms_msg = rospy.wait_for_message("/gazebo/model_states",ModelStates, timeout=None)
+    ids = ms_msg.name
+    poses = ms_msg.pose
+    #tiago_i = ids.index('tiago')
+    #ids.remove('tiago_i')
+    #tiago_pose = poses.pop(tiago_i)
+    dict = {}
+    for id,pos in zip(ids,poses): dict[id]=pos
+    
+    return dict
+
+
+def shout_down_routine(goal,reward):
+    print("Mission accomplised")
+    print(' - goal: ', goal)
+    print(' - episode reward: ',reward)

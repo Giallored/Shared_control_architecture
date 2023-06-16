@@ -52,7 +52,7 @@ def train(num_iterations, agent, env,  evaluate, validate_steps, output, max_epi
         # [optional] save intermideate model
         if step % int(num_iterations/3) == 0:
             agent.save_model(output)
-
+#
         # update 
         step += 1
         episode_steps += 1

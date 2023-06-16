@@ -5,7 +5,7 @@ from geometry_msgs.msg import Twist
 import random
 import numpy as np
 from collections import deque
-from std_msgs.msg import Bool
+from std_msgs.msg import Bool,String
 from SC_navigation.collision_avoidance import Collision_avoider
 from SC_navigation.trajectory_smoother import Trajectory_smooter
 import laser_geometry.laser_geometry as lg
@@ -29,7 +29,7 @@ class Controller():
         self.ca_controller = Collision_avoider()
         self.ts_controller = Trajectory_smooter(dt=1.0/rate)
         self.env = Environment(max_steps=100)
-        self.agent = DDPG(self.env.n_states,self.env.n_actions,args)
+        #self.agent = DDPG(self.env.n_states,self.env.n_actions,args)
         self.pub=rospy.Publisher('mobile_base_controller/cmd_vel', Twist, queue_size=1)
         self.pub_request=rospy.Publisher('request_cmd',Bool,queue_size=1)
 
@@ -45,7 +45,12 @@ class Controller():
 
     def main(self):
         print('Controller node is ready!')
-        print('The GOAL of the simulation is: ',self.env.goal_id, ' in ', self.env.goal_pos)
+        print('... waiting for the user to set the goal')
+        goal_id = rospy.wait_for_message('goal',String,timeout=None)
+        self.env.set_goal(goal_id.data)
+        print(f"The GOAL of the simulation is '{self.env.goal_id}' in {self.env.goal_pos}", end="\r", flush=True)
+
+        #print('The GOAL of the simulation is: ',self.env.goal_id, ' in ', self.env.goal_pos)
         self.env.reset_sim()
         self.env.pause_sim()
         input('\n******** Press inv to start *********')
@@ -62,9 +67,11 @@ class Controller():
 
 
     def callback_test(self,data):
-        print('-')
         self.env.update()
-        reward=self.env.get_rewards()
+        new_observation,reward,done = self.env.get_response()
+        self.episode_reward +=reward
+        if done:
+            self.shout_down_routine()
 
 
         self.env.step+=1
@@ -90,6 +97,8 @@ class Controller():
         if self.verbose:
             self.display_commands(usr_cmd,ca_cmd,ts_cmd,cmd)
         self.rate.sleep()
+    
+
 
 
     def display_commands(self,usr_cmd,ca_cmd,ts_cmd,cmd):
@@ -161,6 +170,12 @@ class Controller():
         self.env.step+=1
         self.rate.sleep()
 
+
+    def shout_down_routine(self):
+        print("Mission accomplised")
+        print(' - goal: ',self.env.goal_id)
+        print(' - episode reward: ',self.episode_reward)
+        rospy.on_shutdown()
 
 
 # --------------------------------------------------------------------------
