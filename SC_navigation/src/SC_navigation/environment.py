@@ -1,24 +1,23 @@
 import rospy
 from std_srvs.srv import Empty
-import laser_geometry.laser_geometry as lg
-from sensor_msgs.msg import PointCloud2,LaserScan
 import numpy as np
 import random
-from SC_navigation.point_cloud2 import read_points
-from std_msgs.msg import Bool,Float64MultiArray
 from SC_navigation.utils import *
 from gazebo_msgs.msg import ModelStates
+from SC_navigation.laser_scanner import LaserScanner
 
 
 class Environment():
     def __init__(self,
+                 robot,
                  n_agents=3,
-                 delta=1,
-                 max_steps=1000,
+                 delta_goal=1,
+                 delta_coll=0.7,
+                 max_steps=100,
                  verbosity=False
                  ):
+        
         self.n_agents=n_agents
-        self.delta = delta
         self.max_steps=max_steps
         self.verbosity=verbosity
         self.n_actions = n_agents
@@ -31,39 +30,45 @@ class Environment():
         self.step = 0
         self.time=0
         self.laserScanner = LaserScanner()
-        self.tiago = TIAgo()
-
-        # Once initialized, you need to setup:
-        # - n_states (from the points seen by the scan)  
-        # - obsjects in the simulations
-        # - tiago
-        # - goal (chosen random from the objects in the scene)
+        self.robot = robot
+        
         self.setup()
 
+
         #reward stuff
+        self.delta_coll = delta_coll
+        self.delta_goal = delta_goal
+
         self.prev_act=[1.,0.,0.]
         self.cur_act = [1.,0.,0.]
         self.cur_usr_cmd=[0.,0.]
         self.cur_cmd = [0.,0.]
-        self.R_safe = -5 # coeff penalizing sloseness to obstacles
-        self.R_col = -1000 # const penalizing collisions
-        self.R_goal = -0.1 #coeff penalizing the distance from the goal
-        self.R_end = 1000 # const rewarding the rach of the goal
-        self.R_alpha = 10 #coeff penalizing if the arbitration changes too fast
-        self.R_cmd = 1
+        self.R_safe = rospy.get_param('/rewards/R_safe')  # coeff penalizing sloseness to obstacles
+        self.R_col = rospy.get_param('/rewards/R_col')  # const penalizing collisions
+        self.R_goal = rospy.get_param('/rewards/R_goal')  #coeff penalizing the distance from the goal
+        self.R_end = rospy.get_param('/rewards/R_end')  # const rewarding the rach of the goal
+        self.R_alpha = rospy.get_param('/rewards/R_alpha')  #coeff penalizing if the arbitration changes too fast
+        self.R_cmd = rospy.get_param('/rewards/R_cmd') 
+        
+        
 
     def setup(self):
         # read a scan and get all points to compute the current state
         self.cur_observation = self.laserScanner.get_obs_points()
         #get the n_state using the current state
         self.n_states = len(self.cur_observation)
-        
         # read the model state to get the tiango and obstacle pose
         self.obj_dict = get_sim_info()
         tiago_pose = self.obj_dict['tiago']
-        self.tiago.set_MBpose(tiago_pose)
-        obs_ids = list(self.obj_dict.keys())
-        obs_ids.remove('tiago')
+        self.robot.set_MBpose(tiago_pose)
+        objects =list(self.obj_dict.keys())
+        objects.remove('tiago')
+        objects.remove('ground_plane')
+        self.obs_ids=[]
+        for id in objects:
+            if not id[0:4] == 'wall':
+                self.obs_ids.append(id)
+        self.choose_goal()
 
         
         # get the current goal random
@@ -71,22 +76,26 @@ class Environment():
         #self.goal_pos = Vec3_to_list(self.obj_dict[self.goal_id].position)
 
 
+
     def reset(self):
         self.reset_sim()
+        self.choose_goal()
         self.update()
     
     def pause(self):
+        self.is_running=False
         self.time=rospy.get_time()
         self.pause_sim()
 
     def unpause(self):
+        self.is_running=True
         self.unpause_sim()
 
     def update(self):
         #print('UPDATE')
         self.obj_dict = get_sim_info()
         self.goal_pos = Vec3_to_list(self.obj_dict[self.goal_id].position)
-        self.tiago.set_MBpose(self.obj_dict['tiago'])        
+        self.robot.set_MBpose(self.obj_dict['tiago'])        
         self.time = rospy.get_time()
         self.cur_observation = self.laserScanner.get_obs_points()
         self.set_goal_dist()
@@ -94,12 +103,30 @@ class Environment():
 
     def get_response(self):
         observation = self.cur_observation
+
         reward = self.get_reward()
-        if self.goal_dist<=self.delta:# or  self.step>=self.max_steps:
+        if self.goal_check() or self.coll_check() or self.step>=self.max_steps:
             done=True
         else:
             done = False
         return observation, reward, done 
+    
+    def goal_check(self):
+        if self.goal_dist<=self.delta_goal:
+            print('Goal riched!')
+            return True
+        else:
+            return False
+
+    def coll_check(self):
+        cls_obs,min_dist = compute_cls_obs(self.cur_observation)
+        if min_dist<=self.robot.clear:
+            print('Collision!')
+            return True
+        else:
+            return False
+
+
     
     def update_act(self,act,usr_cmd,cmd):
         self.prev_act=self.cur_act 
@@ -111,10 +138,10 @@ class Environment():
     def get_reward(self):
         # safety oriented
         cls_obs,min_dist = compute_cls_obs(self.cur_observation)
-        if min_dist>=self.delta:
+        if min_dist>=self.delta_coll:
             r_safety = 0
-        elif min_dist>self.tiago.clearance and min_dist<self.delta:
-            r_safety = (self.delta-min_dist)*self.R_safe
+        elif min_dist>self.robot.clear and min_dist<self.delta_coll:
+            r_safety = (self.delta_coll-min_dist)*self.R_safe
         else:
             r_safety = self.R_col
 
@@ -126,7 +153,7 @@ class Environment():
 
         # Goal oriented
         r_goal = self.R_goal*self.goal_dist
-        if self.goal_dist<=self.delta:
+        if self.goal_dist<=self.delta_goal:
             r_end = self.R_end
         else:
             r_end=0
@@ -143,11 +170,11 @@ class Environment():
         return reward
     
     def get_goal_dist(self):
-        goal_dist = np.linalg.norm(np.subtract(self.goal_pos,self.tiago.mb_position))
+        goal_dist = np.linalg.norm(np.subtract(self.goal_pos,self.robot.mb_position))
         return goal_dist
 
     def set_goal_dist(self):
-        self.goal_dist = np.linalg.norm(np.subtract(self.goal_pos,self.tiago.mb_position))
+        self.goal_dist = np.linalg.norm(np.subtract(self.goal_pos,self.robot.mb_position))
 
     
     def set_goal(self,goal_id:str):
@@ -156,62 +183,16 @@ class Environment():
             self.goal_pos = Vec3_to_list(self.obj_dict[self.goal_id].position)
         except rospy.ROSInterruptException:
             pass
-        
-
-
-
-
-
-
-
-    # here you publish a request for an action to the other nodes
-    #  to collect the input commands to arbitrate
-    def get_commands(self):
-        self.pub_act_request.publish(Bool())
-        cmd_msg= rospy.wait_for_message('autonomous_controllers/ts_cmd_vel',Float64MultiArray,timeout=None)
-        usr_cmd,ca_cmd,ts_cmd = from_cmd_msg(cmd_msg)
-
-
-
-
-class Observation():
-    def __init__(self,step,time,usr_cmd,ca_cmd,ts_cmd,obs):
-        self.step=step
-        self.time=time
-        self.usr_cmd = usr_cmd
-        self.ca_cmd = ca_cmd
-        self.ts_cmd = ts_cmd
-        self.obs=obs
-    
-    def display(self):
-        print('---------------')
-        print('STEP: ',self.step)
-        print(' - timestep: ',self.time)
-        print(' - commands: ',self.step)
-        print(' - n_obstacles: ',len(self.obs))
+              
+    def choose_goal(self):
+        self.goal_id = random.sample(self.obs_ids,1)[0]
+        #print(self.goal_id)
+        self.goal_pos = Vec3_to_list(self.obj_dict[self.goal_id].position)
     
 
-class LaserScanner():
-    def __init__(self):
-        self.lp = lg.LaserProjection()
-        self.OFFSET = 20
 
-    def trim(self,scanlist):
-        trimmed_scanlist = np.delete(scanlist,range(self.OFFSET),0)
-        trimmed_scanlist = np.delete(trimmed_scanlist, range( len(trimmed_scanlist) -self.OFFSET , len(trimmed_scanlist)),0)
-        return trimmed_scanlist
-    def get_obs_points(self,scan_msg=None):
-        if scan_msg==None:
-            scan_msg=rospy.wait_for_message("scan_raw",LaserScan, timeout=None)
-        scan = self.lp.projectLaser(scan_msg)
-        points=[]
-        for p in read_points(scan, skip_nans=True):
-            point=[p[0], p[1]]#, data[2], data[3]]
-            points.append(point)
-        trimmed_list=self.trim(points)
-        return trimmed_list
 
-    
+
 
 
 

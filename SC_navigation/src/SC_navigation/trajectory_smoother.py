@@ -6,15 +6,14 @@ import random
 import numpy as np
 from collections import deque
 from std_msgs.msg import Bool,Float64MultiArray
-from auto_controller.utils import list_to_twist,twist_to_act,to_array_msg
 
 class Trajectory_smooter():
-    def __init__(self, dt,poly_degree=2, n_actions=3):
+    def __init__(self,poly_degree=2, n_actions=3):
         self.poly_degree = poly_degree
         self.n_actions = n_actions
         self.previous_time=0
         self.last_actions = deque([],n_actions) #(time,v,omega)
-        for i in range(self.n_actions): self.last_actions.append([i*dt,0,0])
+        for i in range(self.n_actions): self.last_actions.append([i*0.15,0,0])
 
 
     def get_cmd(self,time):

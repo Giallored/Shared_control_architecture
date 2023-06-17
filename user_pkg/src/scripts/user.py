@@ -16,16 +16,20 @@ class User():
         self.tiago=TIAgo()
         self.pub = rospy.Publisher('usr_cmd_vel', Twist, queue_size=1)
         self.pub_goal = rospy.Publisher('goal', String, queue_size=1)
+        self.goal_id='tiago'
+        
         #self.pub = rospy.Publisher('usr_cmd_vel', Float64MultiArray, queue_size=1)
         
         #primitives
+        self.stop_cmd = cmd_to_twist([0.0,0.0])
         self.up_cmd = cmd_to_twist([0.8,0.0])
         self.down_cmd = cmd_to_twist([-0.5,0.0])
         self.left_cmd = cmd_to_twist([0.0,-1.0])
         self.right_cmd = cmd_to_twist([0.0,1.0])
+        
 
         #threshold on bearing to turn 
-        self.theta_th = np.pi*0.1
+        self.theta_th = np.pi*0.01
        
         #self.vel_cmd = Twist()
         self.rate=rospy.Rate(rate) # 10hz
@@ -33,20 +37,19 @@ class User():
 
     def main(self):
         print('User node is ready!')
-        self.goal_id =self.choose_goal()
-
-        print('GOAL: ',self.goal_id)
+        rospy.Subscriber('goal',String,self.set_goal)
         while not rospy.is_shutdown():
-            self.pub_goal.publish(String(self.goal_id))
-            self.obj_dict = get_sim_info()
-            self.goal_pos = Vec3_to_list(self.obj_dict[self.goal_id].position)
-            self.tiago.set_MBpose(self.obj_dict['tiago'])  
+            self.update()
             cmd = self.get_cmd()
             self.pub.publish(cmd)
             self.rate.sleep()
 
     def get_cmd(self):
         goal_rel_pos = self.tiago.get_relative_pos(self.goal_pos)
+
+        if np.linalg.norm(goal_rel_pos)<0.01:
+            #print('STOP')
+            return self.stop_cmd 
 
         if goal_rel_pos[1]<0:
             theta = np.arctan2(goal_rel_pos[1],goal_rel_pos[0])
@@ -62,9 +65,6 @@ class User():
         else:
             p = self.theta_th/abs(theta)
 
-        #print('--------')
-        #print(' - theta: ',theta)
-        #print(' - p: ',p)
         cmd = self.e_greedy_act(theta,p)
         
         return cmd
@@ -72,31 +72,39 @@ class User():
 
     def e_greedy_act(self,theta,p):
         epsilon= random.random()
-        #print(' - e: ',epsilon)
+        ##print(' - e: ',epsilon)
         if epsilon<=p: #straingth
             
-            print(' - | ^ |')
+            print('UP')
             return self.up_cmd
             #if abs(theta)>=3/4*np.pi:
-            #    print(' - | v |')
+            #    #print(' - | v |')
             #    return self.down_cmd
             #else:
             #    print(' - | ^ |')
             #    return self.up_cmd
         else:       #turn
             if theta>0:
-                print(' - | > |')
+                print('RIGHT')
                 return self.right_cmd
             else:
-                print(' - | < |')
+                print('LEFT')
                 return self.left_cmd
-            
+    
+    def update(self):
+        self.obj_dict = get_sim_info()
+        self.goal_pos = Vec3_to_list(self.obj_dict[self.goal_id].position)
+        self.tiago.set_MBpose(self.obj_dict['tiago'])  
      
     def choose_goal(self):
         obj_dict = get_sim_info()
         obs_ids = list(obj_dict.keys())
         obs_ids.remove('tiago')
         return random.sample(obs_ids,1)[0]
+    
+    def set_goal(self,data):
+        self.goal_id = data.data
+        #print(f"The new GOAL of the simulation is '{self.goal_id}'")
 
 if __name__ == '__main__':
     try:

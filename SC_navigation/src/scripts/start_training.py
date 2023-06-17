@@ -2,6 +2,7 @@ import argparse
 from RL_agent.utils import *
 import rospy
 from SC_navigation.navigation_controller import Controller
+import os
 
 if __name__ == "__main__":
 
@@ -31,35 +32,17 @@ if __name__ == "__main__":
     parser.add_argument('--train_iter', default=200000, type=int, help='train iters each timestep')
     parser.add_argument('--epsilon', default=50000, type=int, help='linear decay of exploration policy')
     parser.add_argument('--seed', default=-1, type=int, help='')
-    #parser.add_argument('--resume', default='default', type=str, help='Resuming model path for testing')
     
-
+    
     args = parser.parse_args()
     args.output = get_output_folder(args.output, args.env)
-    #if args.resume == 'default':
-    #    args.resume = 'output/{}-run0'.format(args.env)
-
     
-
-    #env = NormalizedEnv(gym.make(args.env))
-
-    #if args.seed > 0:
-    #    np.random.seed(args.seed)
-    #    env.seed(args.seed)
-
-    #env = Environment()
-
-    #n_states = env.observation_space.shape[0]
-    #n_actions = env.action_space.shape[0]
-
-    #agent = DDPG(n_states, n_actions, args)
-    #evaluate = Evaluator(args.validate_episodes, 
-    #    args.validate_steps, args.output, max_episode_length=args.max_episode_length)
-
-
+    
     try:
         if args.mode == 'train' or args.mode =='test' :
             try:
+                #os.system('rosrun user_pkg user.py')
+
                 args.mode='test'
                 rospy.init_node('navigation_controller', anonymous=True)
                 node =Controller(args)
@@ -71,6 +54,4 @@ if __name__ == "__main__":
 
     except rospy.ROSInterruptException:
         pass
-
-
     

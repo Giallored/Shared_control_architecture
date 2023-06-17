@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<launch>
+    <rosparam command="load" file="$(find SC_navigation)/config/navigation_params.yaml" />
+    <!-- Launch the training system -->
+    <node pkg="user_pkg" name="user" type="user.py"/>
+    <node pkg="SC_navigation" name="controller" type="controller.py" output="screen"/>
+
+</launch>

@@ -70,4 +70,30 @@ def get_output_folder(parent_dir, env_name):
     os.makedirs(parent_dir, exist_ok=True)
     return parent_dir
 
+class HyperParams:
+    def __init__(self,hp_dict):
+        self.hidden1=hp_dict['hidden1']
+        self.hidden2=hp_dict['hidden2']
+        self.rate=hp_dict['rate']
+        self.prate=hp_dict['prate']
+        self.warmup=hp_dict['warmup']
+        self.discount=hp_dict['discount']
+        self.bsize=hp_dict['bsize']
+        self.rmsize=hp_dict['rmsize']
+        self.window_length=hp_dict['window_length']
+        self.tau=hp_dict['tau']
+        self.ou_theta=hp_dict['ou_theta']
+        self.ou_sigma=hp_dict['ou_sigma']
+        self.ou_mu=hp_dict['ou_mu']
+        self.validate_episodes=hp_dict['validate_episodes']
+        self.max_episode_length=hp_dict['max_episode_length']
+        self.validate_steps=hp_dict['validate_steps']
+        self.output=hp_dict['output']
+        self.debug=hp_dict['debug']
+        self.init_w=hp_dict['init_w']
+        self.train_iter=hp_dict['train_iter']
+        self.epsilon=hp_dict['epsilon']
+        self.seed=hp_dict['seed']
+
+
 

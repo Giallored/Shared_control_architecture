@@ -2,7 +2,6 @@
 
 import rospy
 from geometry_msgs.msg import Twist
-import random
 import numpy as np
 from collections import deque
 from std_msgs.msg import Bool,String
@@ -12,6 +11,7 @@ import laser_geometry.laser_geometry as lg
 from SC_navigation.environment import Environment
 from SC_navigation.utils import *
 from RL_agent.ddpg import DDPG
+from RL_agent.utils import HyperParams
 from sensor_msgs.msg import PointCloud2,LaserScan
 from copy import deepcopy
 
@@ -20,135 +20,133 @@ from copy import deepcopy
 
 class Controller():
     
-    def __init__(self,args,rate=10,verbose=False):
-        self.args = args
+    def __init__(self,mode,train_param=None,rate=10,verbose=False):
+       
+        self.mode = rospy.get_param('/controller/mode')      
         self.rate=rospy.Rate(rate) # 10hz        
         self.verbose=verbose
 
-        #initializations
-        self.ca_controller = Collision_avoider()
-        self.ts_controller = Trajectory_smooter(dt=1.0/rate)
-        self.env = Environment(max_steps=100)
-        #self.agent = DDPG(self.env.n_states,self.env.n_actions,args)
-        self.pub=rospy.Publisher('mobile_base_controller/cmd_vel', Twist, queue_size=1)
-        self.pub_request=rospy.Publisher('request_cmd',Bool,queue_size=1)
-
         #training stuff
-        self.n_iter = args.train_iter
+        self.hyperParam = train_param
         self.prev_alpha=[1.0,1.0,1.0]
         self.prev_usr_cmd= [0.,0.]
         self.prev_cmd = [0.,0.]
-        self.episode=0
-        self.episode_reward = 0.
+        self.epoch=0
+        self.episode_reward = 0.0
+
+        #controllers stuff
+        delta = rospy.get_param('/controller/delta')
+        K_lin = rospy.get_param('/controller/K_lin')
+        K_ang = rospy.get_param('/controller/K_ang')
+
+        #initializations
+        self.ca_controller = Collision_avoider(
+            delta=rospy.get_param('/controller/delta'),
+            K_lin=rospy.get_param('/controller/K_lin'),
+            K_ang=rospy.get_param('/controller/K_ang'))
+        self.ts_controller = Trajectory_smooter()
+        self.tiago = TIAgo(clear =rospy.get_param('/controller/taigoMBclear'))
+        self.env = Environment(n_agents=3,
+                               delta_coll= rospy.get_param('/controller/delta_coll'),
+                               delta_goal= rospy.get_param('/training/delta_goal'),
+                               max_steps=self.hyperParam.train_iter,
+                               robot = self.tiago)
+
+        self.agent = DDPG(self.env.n_states,self.env.n_actions,self.hyperParam)
+
+        self.pub=rospy.Publisher('mobile_base_controller/cmd_vel', Twist, queue_size=1)
+        self.pub_goal=rospy.Publisher('goal',String,queue_size=1)
+        
+        
 
 
 
     def main(self):
         print('Controller node is ready!')
-        print('... waiting for the user to set the goal')
-        goal_id = rospy.wait_for_message('goal',String,timeout=None)
-        self.env.set_goal(goal_id.data)
+        print('The mode of the simulation is: ',self.mode)
+        
+        self.reset()
         print(f"The GOAL of the simulation is '{self.env.goal_id}' in {self.env.goal_pos}", end="\r", flush=True)
 
         #print('The GOAL of the simulation is: ',self.env.goal_id, ' in ', self.env.goal_pos)
-        self.env.reset_sim()
+        
         self.env.pause_sim()
         input('\n******** Press inv to start *********')
         countdown(3)
         self.env.unpause_sim()
 
-        if self.args.mode=='test':
-            rospy.Subscriber('usr_cmd_vel',Twist,self.callback_test)
-            #rospy.Subscriber('scan_raw',LaserScan,self.update_env)
-
+        if self.mode=='test':
+            #self.agent.load_weights(model_path)#?
+            self.agent.is_training = False
+            rospy.Subscriber('usr_cmd_vel',Twist,self.callback_SC)
+        elif self.mode=='train':
+            self.agent.is_training = True
+            rospy.Subscriber('usr_cmd_vel',Twist,self.callback_SC)
+        elif self.mode == 'direct':
+            rospy.Subscriber('usr_cmd_vel',Twist,self.callback_direct)
         else:
-            rospy.Subscriber('usr_cmd_vel',Twist,self.callback_train)
+            rospy.ROSInterruptException            
+        
         rospy.spin()
 
 
-    def callback_test(self,data):
+    def callback_SC(self,data):
         self.env.update()
-        new_observation,reward,done = self.env.get_response()
-        self.episode_reward +=reward
-        if done:
-            self.shout_down_routine()
-
-
-        self.env.step+=1
-
-        #get commands
-        usr_cmd = twist_to_cmd(data)
-        ca_cmd=self.ca_controller.get_cmd(self.env.cur_observation)
-
-        #ca_cmd=[0.,0.]
-        ts_cmd = self.ts_controller.get_cmd(self.env.time)
-        ts_cmd=[0.,0.]
-        #get arbitration, blend commands and send the msg to TIAgo 
-        alpha=self.get_arbitration()
-        cmd=np.dot(alpha,[usr_cmd,ca_cmd,ts_cmd])
-        msg = cmd_to_twist(cmd)
-        self.pub.publish(msg)
-
-        # store the action for the TS controller
-        time=rospy.get_time()
-        self.ts_controller.store_action(time,cmd)
-        self.env.update_act(alpha,usr_cmd,cmd)
-
-        if self.verbose:
-            self.display_commands(usr_cmd,ca_cmd,ts_cmd,cmd)
-        self.rate.sleep()
-    
-
-
-
-    def display_commands(self,usr_cmd,ca_cmd,ts_cmd,cmd):
-        print('STEP: ', self.env.step)
-        print(' - user: ',usr_cmd)
-        print(' - ca: ',ca_cmd)
-        print(' - ts: ',ts_cmd)
-        print('FINAL: ',cmd)
-        print('---------------------')
-
-    def get_arbitration(self):
-        alpha=self.prev_alpha
-
-        return alpha
-
-
-    def callback_training(self,data):
-        
         #get results fom the previous action and let the agent observe
         new_observation,reward,done = self.env.get_response()
         self.agent.observe(reward, new_observation, done)
 
-        # update policy only if the warmup is finished
-        if self.env.step > self.args.warmup :
-            self.agent.update_policy()
+        if self.mode == 'train':
+            # update policy only if the warmup is finished
+            if self.env.step > self.hyperParam.warmup:
+                self.env.pause_sim()
+                self.agent.update_policy()
+                self.env.unpause_sim()
 
-        # save and update
-        if self.env.step % int(10) == 0:
-            self.agent.save_model(self.args.output)
+            # save and update
+            if self.env.step % int(10) == 0:
+                self.agent.save_model(self.hyperParam.output)
+
         
         #update
         self.env.step += 1
-        self.episode_steps += 1
         self.episode_reward += reward
         self.observation = deepcopy(new_observation)
 
 
+        if done: # end of episode
+            print(' - goal: ',self.env.goal_id)
+            print(' - steps: ',self.env.step)
+            print(' - episode reward: ',self.episode_reward)
+            print('-')
+            self.reset()
+            print(f"The new GOAL of the simulation is '{self.env.goal_id}' in {self.env.goal_pos}")#, end="\r", flush=True)
+            #if self.mode == 'train':
+            #    self.epoch+=1
+            #    if self.epoch==self.max_epochs:
+            #        self.shout_down_routine()
+            #    self.reset()
+            #    print(f"The new GOAL of the simulation is '{self.env.goal_id}' in {self.env.goal_pos}", end="\r", flush=True)
+            #else:
+            #    self.shout_down_routine()
+
 
         #NEW EPISODE
         #----------------------------------------------------------
+        self.env.step+=1
+
         #get commands
         usr_cmd = twist_to_cmd(data)
-        ca_cmd=[0.,0.]# = self.ca_controller.get_cmd(self.env.obs)
-        ts_cmd = self.ts_controller.get_cmd(self.env.time)
+        ca_cmd = self.ca_controller.get_cmd(self.env.cur_observation)
+        ts_cmd = [0.,0.]#self.ts_controller.get_cmd(self.env.time)
 
         # get alpha from the DDPG    ==> as compute action
-        if self.env.step <= self.args.warmup:
-            alpha = self.agent.random_action()
-        else:
-            alpha = self.agent.select_action(self.observation)
+        #if self.mode == 'train' and self.env.step <= self.hyperParam.warmup:
+        #    alpha = self.agent.random_action()
+        #else:
+        #    alpha = self.agent.select_action(self.observation)
+        alpha=self.get_arbitration()
+
 
         # blend commands and send the msg to TIAgo 
         # (as the first part of step() in gym envs)
@@ -167,15 +165,38 @@ class Controller():
 
         if self.verbose:
             self.display_commands(usr_cmd,ca_cmd,ts_cmd,cmd)
-        self.env.step+=1
+        
         self.rate.sleep()
 
 
+
+
+
+    def display_commands(self,usr_cmd,ca_cmd,ts_cmd,cmd):
+        print('STEP: ', self.env.step)
+        print(' - user: ',usr_cmd)
+        print(' - ca: ',ca_cmd)
+        print(' - ts: ',ts_cmd)
+        print('FINAL: ',cmd)
+        print('---------------------')
+
+    def get_arbitration(self):
+        return self.prev_alpha
+
+
+
+
     def shout_down_routine(self):
-        print("Mission accomplised")
-        print(' - goal: ',self.env.goal_id)
-        print(' - episode reward: ',self.episode_reward)
+        #print("Mission accomplised")
+        
         rospy.on_shutdown()
+
+    def reset(self):
+        self.env.reset()
+        self.env.update()
+        new_goal = self.env.goal_id
+        self.pub_goal.publish(String(new_goal))
+        self.episode_reward = 0.
 
 
 # --------------------------------------------------------------------------

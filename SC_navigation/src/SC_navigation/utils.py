@@ -7,10 +7,10 @@ from gazebo_msgs.msg import ModelStates
 
 
 class TIAgo():
-    def __init__(self, mb_position=[0.,0.,0.],mb_orientation=[0.,0.,0.]):
+    def __init__(self, clear=0.2, mb_position=[0.,0.,0.],mb_orientation=[0.,0.,0.]):
         self.mb_position=mb_position # wrt RFworld
         self.mb_orientation=mb_orientation # wrt RFworld
-        self.clearance = 0.20
+        self.clear = clear
         self.Tf_tiago_w = np.zeros((4,4))
 
     def set_MBpose(self,pose):
@@ -21,7 +21,7 @@ class TIAgo():
         self.mb_orientation=rot.as_euler('xyz', degrees=False)
 
     def get_MBpose(self):
-        return self.mb_position,self.mb_position
+        return Vec3_to_list(self.mb_position),Vec3_to_listself.mb_position
     
     def get_relative_pos(self,obj_pos):
         pos = obj_pos+[1]
@@ -126,3 +126,5 @@ def shout_down_routine(goal,reward):
     print("Mission accomplised")
     print(' - goal: ', goal)
     print(' - episode reward: ',reward)
+    
+
