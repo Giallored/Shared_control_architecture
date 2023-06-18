@@ -4,9 +4,9 @@ training: #namespace
     hidden2: 300            #hidden num of second fully connect layer 
     rate: 0.001             #learning rate
     prate: 0.0001           #policy net learning rate (only for DDPG)
-    warmup: 100             #time without training but only filling the replay memory
+    warmup: 10 #100             #time without training but only filling the replay memory
     discount: 0.99          
-    bsize: 64               #minibatch size
+    bsize: 1 #64               #minibatch size
     rmsize: 6000000         #memory size
     window_length: 1         
     tau: 0.001              #moving average for target network
@@ -34,7 +34,7 @@ rewards:
   
 
 controller:
-    mode: 'test'           #support option: train/test/direct
+    mode: 'train'           #support option: train/test/direct
     rate: 10
     verbose: False
     env: 'inventory'        #which is the world you are using

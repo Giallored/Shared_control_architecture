@@ -20,6 +20,7 @@ class Actor(nn.Module):
         self.fc3 = nn.Linear(hidden2, nb_actions)
         self.relu = nn.ReLU()
         self.tanh = nn.Tanh()
+        self.softmax = nn.Softmax(dim=-1)
         self.init_weights(init_w)
     
     def init_weights(self, init_w):
@@ -33,7 +34,8 @@ class Actor(nn.Module):
         out = self.fc2(out)
         out = self.relu(out)
         out = self.fc3(out)
-        out = self.tanh(out)
+        out = self.relu(out)
+        out = self.softmax(out) #to make the out sum to 1 
         return out
 
 class Critic(nn.Module):
@@ -52,6 +54,8 @@ class Critic(nn.Module):
     
     def forward(self, xs):
         x, a = xs
+        #print('x size = ',x.shape)
+        #print('a size = ',a.shape)
         out = self.fc1(x)
         out = self.relu(out)
         # debug()

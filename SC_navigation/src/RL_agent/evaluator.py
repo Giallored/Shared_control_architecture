@@ -34,7 +34,7 @@ class Evaluator(object):
             while not done:
                 # basic operation, action ,reward, blablabla ...
                 action = policy(observation)
-
+#
                 observation, reward, done, info = env.step(action)
                 if self.max_episode_length and episode_steps >= self.max_episode_length -1:
                     done = True

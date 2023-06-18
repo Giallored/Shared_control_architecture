@@ -56,28 +56,41 @@ class DDPG(object):
         self.a_t = None # Most recent action
         self.is_training = True
 
-        # 
-        if USE_CUDA: self.cuda()
+        #use_cuda = torch.cuda.is_available()
+        self.use_cuda = False
+        if self.use_cuda: self.cuda()
+
+    def init_state(self,state):
+        self.s_t=state
+        self.a_t=np.array([1.0,0.0,0.0])
 
     def update_policy(self):
+        #print('Update policy...')
         # Sample batch
-        state_batch, action_batch, reward_batch, \
-        next_state_batch, terminal_batch = self.memory.sample_and_split(self.batch_size)
+        #print('Sample:')
+        s_batch,a_batch,r_batch,next_s_batch,t_batch = self.memory.sample_and_split(self.batch_size)
+        #print(' - size of s_batch: ',s_batch.shape)
+        #print(' - size of a_batch: ',a_batch.shape)
+        #print(' - size of r_batch: ',r_batch.shape)
+        #print(' - size of ns_batch: ',next_s_batch.shape)
 
         # Prepare for the target q batch
-        next_q_values = self.critic_target([
-            to_tensor(next_state_batch, volatile=True),
-            self.actor_target(to_tensor(next_state_batch, volatile=True)),
-        ])
-        next_q_values.volatile=False
-
-        target_q_batch = to_tensor(reward_batch) + \
-            self.discount*to_tensor(terminal_batch.astype(np.float))*next_q_values
+        #print(' - Prepare for the target q batch')
+        next_s_tsr = to_tensor(next_s_batch,use_cuda=self.use_cuda, volatile=True)
+        t_act_out = self.actor_target(next_s_tsr) #output of the actor target
+        next_q_val = self.critic_target([next_s_tsr,t_act_out])
+        next_q_val.volatile=False
+        
+        r_tsr = to_tensor(r_batch,use_cuda=self.use_cuda)
+        t_tsr = to_tensor(t_batch.astype(np.float),use_cuda=self.use_cuda)
+        target_q_batch = r_tsr + self.discount*t_tsr*next_q_val
 
         # Critic update
+        #print(' - Critic update')
         self.critic.zero_grad()
-
-        q_batch = self.critic([ to_tensor(state_batch), to_tensor(action_batch) ])
+        a_tsr = to_tensor(a_batch,use_cuda=self.use_cuda)
+        s_tsr = to_tensor(s_batch,use_cuda=self.use_cuda)
+        q_batch = self.critic([s_tsr,a_tsr])
         
         value_loss = criterion(q_batch, target_q_batch)
         value_loss.backward()
@@ -86,18 +99,23 @@ class DDPG(object):
         # Actor update
         self.actor.zero_grad()
 
-        policy_loss = -self.critic([
-            to_tensor(state_batch),
-            self.actor(to_tensor(state_batch))
-        ])
+        #print(' - Actor update')
+
+        s_tsr = to_tensor(s_batch,use_cuda=self.use_cuda)
+        actor_output = self.actor(s_tsr)
+        policy_loss = -self.critic([s_tsr,actor_output])
 
         policy_loss = policy_loss.mean()
         policy_loss.backward()
         self.actor_optim.step()
 
         # Target update
+        #print(' - Target update')
         soft_update(self.actor_target, self.actor, self.tau)
         soft_update(self.critic_target, self.critic, self.tau)
+
+        #print('Valuse loss is ',value_loss)
+        #print('Policy loss is ',policy_loss)
 
 
 
@@ -111,26 +129,39 @@ class DDPG(object):
 
 
     def cuda(self):
+        print('put in cuda')
         self.actor.cuda()
         self.actor_target.cuda()
         self.critic.cuda()
         self.critic_target.cuda()
 
     def observe(self, r_t, s_t1, done):
+        #print('Observe:')
+        #print(' - state size:',self.s_t.shape)
+        #print(' - act size:',self.a_t.shape)
+        #print(' - reward size:',r_t.shape)
         if self.is_training:
-            self.memory.append(self.s_t, self.a_t, r_t, done)
-            self.s_t = s_t1
+            self.memory.append(self.s_t, self.a_t, r_t, done) #append sample in memory
+            self.s_t = s_t1 #update curr state
 
     def random_action(self):
-        action = np.random.uniform(-1.,1.,self.nb_actions)
+        # using the Dirichlet distrution to get the action to sum to 1
+        #action = np.random.uniform(-1.,1.,self.nb_actions)
+        action = np.random.dirichlet(np.ones(3),size=1)[0]
         self.a_t = action
         return action
 
     def select_action(self, s_t, decay_epsilon=True):
-        action = to_numpy(
-            self.actor(to_tensor(np.array([s_t])))
-        ).squeeze(0)
-        action += self.is_training*max(self.epsilon, 0)*self.random_process.sample()
+        #get the action from the actor
+        s_tsr = to_tensor(np.array([s_t]),use_cuda=self.use_cuda)
+        a_tsr = self.actor(s_tsr)
+        action = to_numpy(a_tsr,self.use_cuda).squeeze(0)
+        if self.is_training:
+            #insert some noise
+            noise= np.random.dirichlet(np.ones(3),size=1)[0]
+            e= max(self.epsilon, 0)
+            #action += self.is_training*max(self.epsilon, 0)*self.random_process.sample()
+            action = (1.0-e)*action+e*noise
         action = np.clip(action, -1., 1.)
 
         if decay_epsilon:

@@ -2,7 +2,8 @@
 
 import rospy
 from SC_navigation.navigation_controller import Controller
-from RL_agent.utils import get_output_folder,HyperParams
+from RL_agent.utils import HyperParams
+from SC_navigation.utils import get_output_folder
 
 if __name__ == '__main__':
     print('Lets go!')

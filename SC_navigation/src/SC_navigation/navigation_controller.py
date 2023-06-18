@@ -35,13 +35,13 @@ class Controller():
         self.episode_reward = 0.0
 
         #controllers stuff
-        delta = rospy.get_param('/controller/delta')
-        K_lin = rospy.get_param('/controller/K_lin')
-        K_ang = rospy.get_param('/controller/K_ang')
+        #delta = rospy.get_param('/controller/delta_coll')
+        #K_lin = rospy.get_param('/controller/K_lin')
+        #K_ang = rospy.get_param('/controller/K_ang')
 
         #initializations
         self.ca_controller = Collision_avoider(
-            delta=rospy.get_param('/controller/delta'),
+            delta=rospy.get_param('/controller/delta_coll'),
             K_lin=rospy.get_param('/controller/K_lin'),
             K_ang=rospy.get_param('/controller/K_ang'))
         self.ts_controller = Trajectory_smooter()
@@ -53,7 +53,7 @@ class Controller():
                                robot = self.tiago)
 
         self.agent = DDPG(self.env.n_states,self.env.n_actions,self.hyperParam)
-
+        self.agent.init_state(self.env.cur_observation)
         self.pub=rospy.Publisher('mobile_base_controller/cmd_vel', Twist, queue_size=1)
         self.pub_goal=rospy.Publisher('goal',String,queue_size=1)
         
@@ -70,17 +70,20 @@ class Controller():
 
         #print('The GOAL of the simulation is: ',self.env.goal_id, ' in ', self.env.goal_pos)
         
-        self.env.pause_sim()
-        input('\n******** Press inv to start *********')
-        countdown(3)
-        self.env.unpause_sim()
+        #self.env.pause_sim()
+        #input('\n******** Press inv to start *********')
+        #countdown(3)
+        #self.env.unpause_sim()
 
         if self.mode=='test':
             #self.agent.load_weights(model_path)#?
             self.agent.is_training = False
+            self.agent.eval() #makes the agents in evaluation mode
+            self.decay_epsilon=False
             rospy.Subscriber('usr_cmd_vel',Twist,self.callback_SC)
         elif self.mode=='train':
             self.agent.is_training = True
+            self.decay_epsilon=True
             rospy.Subscriber('usr_cmd_vel',Twist,self.callback_SC)
         elif self.mode == 'direct':
             rospy.Subscriber('usr_cmd_vel',Twist,self.callback_direct)
@@ -93,21 +96,20 @@ class Controller():
     def callback_SC(self,data):
         self.env.update()
         #get results fom the previous action and let the agent observe
-        new_observation,reward,done = self.env.get_response()
+        new_observation,reward,done = self.env.make_step()
         self.agent.observe(reward, new_observation, done)
 
-        if self.mode == 'train':
+        if self.mode == 'train' and self.env.step > self.hyperParam.warmup:
             # update policy only if the warmup is finished
-            if self.env.step > self.hyperParam.warmup:
-                self.env.pause_sim()
-                self.agent.update_policy()
-                self.env.unpause_sim()
+            #self.env.pause_sim()
+            self.agent.update_policy()
+            #self.env.unpause_sim()
 
             # save and update
             if self.env.step % int(10) == 0:
                 self.agent.save_model(self.hyperParam.output)
 
-        
+            
         #update
         self.env.step += 1
         self.episode_reward += reward
@@ -119,16 +121,14 @@ class Controller():
             print(' - steps: ',self.env.step)
             print(' - episode reward: ',self.episode_reward)
             print('-')
-            self.reset()
-            print(f"The new GOAL of the simulation is '{self.env.goal_id}' in {self.env.goal_pos}")#, end="\r", flush=True)
-            #if self.mode == 'train':
-            #    self.epoch+=1
-            #    if self.epoch==self.max_epochs:
-            #        self.shout_down_routine()
-            #    self.reset()
-            #    print(f"The new GOAL of the simulation is '{self.env.goal_id}' in {self.env.goal_pos}", end="\r", flush=True)
-            #else:
-            #    self.shout_down_routine()
+            
+            self.epoch+=1
+            if self.epoch==self.max_epochs:
+                self.shout_down_routine()
+                self.reset()
+                print(f"The new GOAL of the simulation is '{self.env.goal_id}' in {self.env.goal_pos}", end="\r", flush=True)
+            else:
+                self.shout_down_routine()
 
 
         #NEW EPISODE
@@ -137,15 +137,17 @@ class Controller():
 
         #get commands
         usr_cmd = twist_to_cmd(data)
-        ca_cmd = self.ca_controller.get_cmd(self.env.cur_observation)
+        ca_cmd = self.ca_controller.get_cmd(self.env.obstacle_pos)
         ts_cmd = [0.,0.]#self.ts_controller.get_cmd(self.env.time)
 
         # get alpha from the DDPG    ==> as compute action
-        #if self.mode == 'train' and self.env.step <= self.hyperParam.warmup:
-        #    alpha = self.agent.random_action()
-        #else:
-        #    alpha = self.agent.select_action(self.observation)
-        alpha=self.get_arbitration()
+        if self.mode == 'train' and self.env.step <= self.hyperParam.warmup:
+            print('Warm up...')
+            alpha = self.agent.random_action()
+        else:
+            alpha = self.agent.select_action(self.observation,self.decay_epsilon)
+        #alpha=self.get_arbitration()
+        print('Alpha = ',alpha)
 
 
         # blend commands and send the msg to TIAgo 

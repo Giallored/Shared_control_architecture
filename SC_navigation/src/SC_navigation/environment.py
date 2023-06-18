@@ -21,8 +21,8 @@ class Environment():
         self.max_steps=max_steps
         self.verbosity=verbosity
         self.n_actions = n_agents
-        self.n_states = 100 #to setup
-        self.cur_observation = [0]*self.n_states #to setup
+        #self.n_states = 100 #to setup
+        #self.obstacle_pos = [0]*self.n_states #to setup
         self.reset_sim = rospy.ServiceProxy('/gazebo/reset_world', Empty) #resets the simulation
         self.pause_sim = rospy.ServiceProxy('/gazebo/pause_physics', Empty)
         self.unpause_sim = rospy.ServiceProxy('/gazebo/unpause_physics', Empty)
@@ -31,8 +31,6 @@ class Environment():
         self.time=0
         self.laserScanner = LaserScanner()
         self.robot = robot
-        
-        self.setup()
 
 
         #reward stuff
@@ -50,17 +48,22 @@ class Environment():
         self.R_alpha = rospy.get_param('/rewards/R_alpha')  #coeff penalizing if the arbitration changes too fast
         self.R_cmd = rospy.get_param('/rewards/R_cmd') 
         
-        
+        self.setup()
 
     def setup(self):
         # read a scan and get all points to compute the current state
-        self.cur_observation = self.laserScanner.get_obs_points()
-        #get the n_state using the current state
-        self.n_states = len(self.cur_observation)
+        self.ls_ranges,self.obstacle_pos = self.laserScanner.get_obs_points()
+        self.cur_observation =self.get_observation()
+
+        #get the n_state as: n_ranges + 2 (usr_cmd)
+        self.n_states = self.cur_observation.shape[0]
+
         # read the model state to get the tiango and obstacle pose
         self.obj_dict = get_sim_info()
         tiago_pose = self.obj_dict['tiago']
         self.robot.set_MBpose(tiago_pose)
+
+        #compute the list of possible goals
         objects =list(self.obj_dict.keys())
         objects.remove('tiago')
         objects.remove('ground_plane')
@@ -69,13 +72,6 @@ class Environment():
             if not id[0:4] == 'wall':
                 self.obs_ids.append(id)
         self.choose_goal()
-
-        
-        # get the current goal random
-        #self.goal_id = random.sample(obs_ids,1)[0]
-        #self.goal_pos = Vec3_to_list(self.obj_dict[self.goal_id].position)
-
-
 
     def reset(self):
         self.reset_sim()
@@ -92,24 +88,22 @@ class Environment():
         self.unpause_sim()
 
     def update(self):
-        #print('UPDATE')
         self.obj_dict = get_sim_info()
         self.goal_pos = Vec3_to_list(self.obj_dict[self.goal_id].position)
         self.robot.set_MBpose(self.obj_dict['tiago'])        
         self.time = rospy.get_time()
-        self.cur_observation = self.laserScanner.get_obs_points()
+        self.ls_ranges,self.obstacle_pos = self.laserScanner.get_obs_points()
+        self.cur_observation =self.get_observation()
         self.set_goal_dist()
 
-
-    def get_response(self):
-        observation = self.cur_observation
-
+    def make_step(self):
+        #observation = self.get_observation()
         reward = self.get_reward()
         if self.goal_check() or self.coll_check() or self.step>=self.max_steps:
             done=True
         else:
             done = False
-        return observation, reward, done 
+        return self.cur_observation, reward, done 
     
     def goal_check(self):
         if self.goal_dist<=self.delta_goal:
@@ -119,14 +113,12 @@ class Environment():
             return False
 
     def coll_check(self):
-        cls_obs,min_dist = compute_cls_obs(self.cur_observation)
+        cls_obs,min_dist = compute_cls_obs(self.obstacle_pos)
         if min_dist<=self.robot.clear:
             print('Collision!')
             return True
         else:
             return False
-
-
     
     def update_act(self,act,usr_cmd,cmd):
         self.prev_act=self.cur_act 
@@ -134,10 +126,16 @@ class Environment():
         self.cur_usr_cmd=usr_cmd
         self.cur_cmd = cmd
 
+    def get_observation(self):
+        obs = self.cur_usr_cmd+self.ls_ranges
+        obs = np.array(obs,dtype='float64')
+        return obs
+
 
     def get_reward(self):
+
         # safety oriented
-        cls_obs,min_dist = compute_cls_obs(self.cur_observation)
+        cls_obs,min_dist = compute_cls_obs(self.obstacle_pos)
         if min_dist>=self.delta_coll:
             r_safety = 0
         elif min_dist>self.robot.clear and min_dist<self.delta_coll:
@@ -166,28 +164,22 @@ class Environment():
             print('r_cmd: ',r_cmd)
             print('r_end: ',r_end)
             print('Tot rewards:',reward)
-
         return reward
-    
-    def get_goal_dist(self):
-        goal_dist = np.linalg.norm(np.subtract(self.goal_pos,self.robot.mb_position))
-        return goal_dist
 
     def set_goal_dist(self):
         self.goal_dist = np.linalg.norm(np.subtract(self.goal_pos,self.robot.mb_position))
+              
+    def choose_goal(self):
+        self.goal_id = random.sample(self.obs_ids,1)[0]
+        #print(self.goal_id)
+        self.goal_pos = Vec3_to_list(self.obj_dict[self.goal_id].position)
 
-    
     def set_goal(self,goal_id:str):
         self.goal_id=goal_id
         try:
             self.goal_pos = Vec3_to_list(self.obj_dict[self.goal_id].position)
         except rospy.ROSInterruptException:
             pass
-              
-    def choose_goal(self):
-        self.goal_id = random.sample(self.obs_ids,1)[0]
-        #print(self.goal_id)
-        self.goal_pos = Vec3_to_list(self.obj_dict[self.goal_id].position)
     
 
 
