@@ -20,8 +20,9 @@ def to_numpy(var,use_cuda = False):
 
 def to_tensor(ndarray, use_cuda = False,volatile=False, requires_grad=False):
     dtype = torch.cuda.FloatTensor if use_cuda else torch.FloatTensor
+    
     #print('before ndarray is dtype:',ndarray.dtype)
-    ndarray=ndarray.astype('float64')
+    #ndarray=ndarray.astype('float64')
     #print('after ndarray is dtype:',ndarray.dtype)
     return Variable(
         torch.from_numpy(ndarray), volatile=volatile, requires_grad=requires_grad
@@ -39,7 +40,7 @@ def hard_update(target, source):
 
 
 class HyperParams:
-    def __init__(self,hp_dict):
+    def __init__(self,hp_dict,is_training):
         self.hidden1=hp_dict['hidden1']
         self.hidden2=hp_dict['hidden2']
         self.rate=hp_dict['rate']
@@ -62,6 +63,10 @@ class HyperParams:
         self.train_iter=hp_dict['train_iter']
         self.epsilon=hp_dict['epsilon']
         self.seed=hp_dict['seed']
+        self.max_epochs=hp_dict['max_epochs']
+        self.is_training=is_training
+        self.epsilon_decay=hp_dict['epsilon_decay']
+        
 
 
 

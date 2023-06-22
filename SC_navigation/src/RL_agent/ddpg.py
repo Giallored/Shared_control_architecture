@@ -48,21 +48,27 @@ class DDPG(object):
         self.batch_size = args.bsize
         self.tau = args.tau
         self.discount = args.discount
-        self.depsilon = 1.0 / args.epsilon
+        self.epsilon_decay=args.epsilon_decay
 
         # 
-        self.epsilon = 1.0
-        self.s_t = None # Most recent state
-        self.a_t = None # Most recent action
-        self.is_training = True
+        self.epsilon = args.epsilon
+        #self.s_t = None # Most recent state
+        self.a_t = [1.0,0.0,0.0] # Most recent action
+        self.is_training = args.is_training
+        self.episode_value_loss=0.
+        self.episode_policy_loss=0.
 
         #use_cuda = torch.cuda.is_available()
         self.use_cuda = False
         if self.use_cuda: self.cuda()
+        
 
-    def init_state(self,state):
+
+    def reset(self,state):
         self.s_t=state
         self.a_t=np.array([1.0,0.0,0.0])
+        self.episode_value_loss=0.
+        self.episode_policy_loss=0.
 
     def update_policy(self):
         #print('Update policy...')
@@ -76,10 +82,14 @@ class DDPG(object):
 
         # Prepare for the target q batch
         #print(' - Prepare for the target q batch')
-        next_s_tsr = to_tensor(next_s_batch,use_cuda=self.use_cuda, volatile=True)
-        t_act_out = self.actor_target(next_s_tsr) #output of the actor target
+        torch.no_grad()
+        next_s_tsr = to_tensor(next_s_batch,use_cuda=self.use_cuda)#, volatile=True)
+
+        with torch.no_grad():
+            t_act_out = self.actor_target(next_s_tsr) #output of the actor target
+
+        self.critic_target.zero_grad()
         next_q_val = self.critic_target([next_s_tsr,t_act_out])
-        next_q_val.volatile=False
         
         r_tsr = to_tensor(r_batch,use_cuda=self.use_cuda)
         t_tsr = to_tensor(t_batch.astype(np.float),use_cuda=self.use_cuda)
@@ -114,8 +124,12 @@ class DDPG(object):
         soft_update(self.actor_target, self.actor, self.tau)
         soft_update(self.critic_target, self.critic, self.tau)
 
-        #print('Valuse loss is ',value_loss)
-        #print('Policy loss is ',policy_loss)
+        #store the losses
+        self.episode_value_loss+=value_loss.item()
+        self.episode_policy_loss+=policy_loss.item()
+
+        #print('Valuse loss is ',value_loss.item())
+        #print('Policy loss is ',policy_loss.item())
 
 
 
@@ -161,42 +175,39 @@ class DDPG(object):
             noise= np.random.dirichlet(np.ones(3),size=1)[0]
             e= max(self.epsilon, 0)
             #action += self.is_training*max(self.epsilon, 0)*self.random_process.sample()
-            action = (1.0-e)*action+e*noise
+            action =  self.is_training*((1.0-e)*action+e*noise)
         action = np.clip(action, -1., 1.)
 
         if decay_epsilon:
-            self.epsilon -= self.depsilon
+            self.epsilon *= self.epsilon_decay
         
         self.a_t = action
         return action
 
-    def reset(self, obs):
-        self.s_t = obs
-        self.random_process.reset_states()
 
-    def load_weights(self, output):
-        if output is None: return
+    def load_weights(self, output_dir):
+        if output_dir is None: return
 
         self.actor.load_state_dict(
-            torch.load('{}/actor.pkl'.format(output))
+            torch.load('{}/actor.pkl'.format(output_dir))
         )
 
         self.critic.load_state_dict(
-            torch.load('{}/critic.pkl'.format(output))
+            torch.load('{}/critic.pkl'.format(output_dir))
         )
 
 
-    def save_model(self,output):
+    def save_model(self,output_dir):
         torch.save(
             self.actor.state_dict(),
-            '{}/actor.pkl'.format(output)
+            '{}/actor.pkl'.format(output_dir)
         )
         torch.save(
             self.critic.state_dict(),
-            '{}/critic.pkl'.format(output)
+            '{}/critic.pkl'.format(output_dir)
         )
 
     def seed(self,s):
         torch.manual_seed(s)
-        if USE_CUDA:
+        if self.use_cuda:
             torch.cuda.manual_seed(s)

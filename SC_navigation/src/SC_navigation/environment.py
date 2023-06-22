@@ -9,6 +9,7 @@ from SC_navigation.laser_scanner import LaserScanner
 
 class Environment():
     def __init__(self,
+                 name:str,
                  robot,
                  n_agents=3,
                  delta_goal=1,
@@ -16,7 +17,7 @@ class Environment():
                  max_steps=100,
                  verbosity=False
                  ):
-        
+        self.name=name
         self.n_agents=n_agents
         self.max_steps=max_steps
         self.verbosity=verbosity
@@ -36,11 +37,13 @@ class Environment():
         #reward stuff
         self.delta_coll = delta_coll
         self.delta_goal = delta_goal
+        self.stacked_steps = 0
+        self.stacked_th = 5
 
         self.prev_act=[1.,0.,0.]
         self.cur_act = [1.,0.,0.]
         self.cur_usr_cmd=[0.,0.]
-        self.cur_cmd = [0.,0.]
+        self.cur_cmd = np.array([0.,0.])
         self.R_safe = rospy.get_param('/rewards/R_safe')  # coeff penalizing sloseness to obstacles
         self.R_col = rospy.get_param('/rewards/R_col')  # const penalizing collisions
         self.R_goal = rospy.get_param('/rewards/R_goal')  #coeff penalizing the distance from the goal
@@ -75,6 +78,7 @@ class Environment():
 
     def reset(self):
         self.reset_sim()
+        self.step=0
         self.choose_goal()
         self.update()
     
@@ -99,7 +103,7 @@ class Environment():
     def make_step(self):
         #observation = self.get_observation()
         reward = self.get_reward()
-        if self.goal_check() or self.coll_check() or self.step>=self.max_steps:
+        if self.goal_check() or self.stuck_check() or self.coll_check() or self.step>=self.max_steps:
             done=True
         else:
             done = False
@@ -107,7 +111,7 @@ class Environment():
     
     def goal_check(self):
         if self.goal_dist<=self.delta_goal:
-            print('Goal riched!')
+            print('\nGoal riched!')
             return True
         else:
             return False
@@ -115,16 +119,31 @@ class Environment():
     def coll_check(self):
         cls_obs,min_dist = compute_cls_obs(self.obstacle_pos)
         if min_dist<=self.robot.clear:
-            print('Collision!')
+            print('\nCollision!')
             return True
         else:
             return False
+        
+
+    def stuck_check(self):
+        if self.robot.mb_position == self.robot.prev_mb_position:
+            self.stacked_steps += 1
+        else:
+            self.stacked_steps =0
+
+        if self.stacked_steps >= self.stacked_th:
+            print('\nIs stucked!')
+            self.stacked_steps=0
+            return True
+        else:
+            return False
+            
     
     def update_act(self,act,usr_cmd,cmd):
         self.prev_act=self.cur_act 
         self.cur_act = act
         self.cur_usr_cmd=usr_cmd
-        self.cur_cmd = cmd
+        self.cur_cmd = np.array(cmd)
 
     def get_observation(self):
         obs = self.cur_usr_cmd+self.ls_ranges
@@ -144,17 +163,19 @@ class Environment():
             r_safety = self.R_col
 
         # arbitration oriented
-        r_alpha = self.R_alpha*np.linalg.norm(np.subtract(self.prev_act,self.cur_act))
+        r_alpha = 0#self.R_alpha*np.linalg.norm(np.subtract(self.prev_act,self.cur_act))
 
         # command oriented 
         r_cmd = self.R_cmd*np.linalg.norm(np.subtract(self.cur_cmd,self.cur_usr_cmd))
 
         # Goal oriented
         r_goal = self.R_goal*self.goal_dist
+
         if self.goal_dist<=self.delta_goal:
             r_end = self.R_end
         else:
             r_end=0
+
         self.cur_rewards = [r_safety,r_alpha,r_goal,r_cmd,r_end]
         reward = sum(self.cur_rewards)
         if self.verbosity:
@@ -171,7 +192,7 @@ class Environment():
               
     def choose_goal(self):
         self.goal_id = random.sample(self.obs_ids,1)[0]
-        #print(self.goal_id)
+        #self.goal_id = 'bookshelf_1'
         self.goal_pos = Vec3_to_list(self.obj_dict[self.goal_id].position)
 
     def set_goal(self,goal_id:str):

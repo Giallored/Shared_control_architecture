@@ -5,16 +5,20 @@ from scipy.spatial.transform import Rotation
 import time
 from gazebo_msgs.msg import ModelStates
 import os
+import matplotlib.pyplot as plt
+import pickle
 
 
 class TIAgo():
     def __init__(self, clear=0.2, mb_position=[0.,0.,0.],mb_orientation=[0.,0.,0.]):
         self.mb_position=mb_position # wrt RFworld
+        self.prev_mb_position=mb_position
         self.mb_orientation=mb_orientation # wrt RFworld
         self.clear = clear
         self.Tf_tiago_w = np.zeros((4,4))
 
     def set_MBpose(self,pose):
+        self.mb_prev_position=self.mb_position
         self.mb_position=Vec3_to_list(pose.position)
         #turn orientation from quat to euler (in rad)
         rot = Rotation.from_quat(Vec4_to_list(pose.orientation))
@@ -147,8 +151,10 @@ def get_output_folder(parent_dir, env_name):
     -------
     parent_dir/run_dir
       Path to this run's save directory.
+    
     """
     os.makedirs(parent_dir, exist_ok=True)
+               
     experiment_id = 0
     for folder_name in os.listdir(parent_dir):
         if not os.path.isdir(os.path.join(parent_dir, folder_name)):
@@ -165,4 +171,120 @@ def get_output_folder(parent_dir, env_name):
     parent_dir = parent_dir + '-run{}'.format(experiment_id)
     os.makedirs(parent_dir, exist_ok=True)
     return parent_dir
+
+
+class Plot():
+    def __init__(self,goal,env,parent_dir,name,description:str=''):
+        self.name=name
+        self.dir = os.path.join(parent_dir,self.name)
+        os.makedirs(self.dir, exist_ok=True)
+        self.description=description
+        
+        self.goal=goal
+        self.env=env
+        #initializations
+        self.timesteps=[0.]
+        self.usr_cmd=[[0,0]]
+        self.ca_cmd=[[0,0]]
+        self.ts_cmd=[[0,0]]
+        self.alpha=[[1.0,0.0,0.0]]
+        self.cmd=[[0.0,0.0]]
+    
+    def store(self,t,usr_cmd,ca_cmd,ts_cmd,alpha,cmd):
+        self.timesteps=np.append(self.timesteps,t)
+        self.usr_cmd=np.append(self.usr_cmd,[usr_cmd],axis=0)
+        self.ca_cmd=np.append(self.ca_cmd,[ca_cmd],axis=0)
+        self.ts_cmd=np.append(self.ts_cmd,[ts_cmd],axis=0)
+        self.alpha=np.append(self.alpha,[alpha],axis=0)
+        self.cmd=np.append(self.cmd,[cmd],axis=0)
+    
+    def save_plot(self,show=False):
+        
+        f_usr, axs = plt.subplots(2,1, sharey=True)
+        axs[0].plot(self.timesteps,self.usr_cmd[:,0])
+        axs[0].set_title('linear vel')
+        axs[1].plot(self.timesteps,self.usr_cmd[:,1])
+        axs[1].set_title('angular vel')
+        path = os.path.join(self.dir,'usr_cmd.png')
+        plt.savefig(path)
+
+        f_ca, axs = plt.subplots(2,1, sharey=True)
+        axs[0].plot(self.timesteps,self.ca_cmd[:,0])
+        axs[0].set_title('linear vel')
+        axs[1].plot(self.timesteps,self.ca_cmd[:,1])
+        axs[1].set_title('angular vel')
+        path = os.path.join(self.dir,'ca_cmd.png')
+        plt.savefig(path)
+        
+        f_ts, axs = plt.subplots(2,1, sharey=True)
+        axs[0].plot(self.timesteps,self.ts_cmd[:,0])
+        axs[0].set_title('linear vel')
+        axs[1].plot(self.timesteps,self.ts_cmd[:,1])
+        axs[1].set_title('angular vel')
+        path = os.path.join(self.dir,'ts_cmd.png')
+        plt.savefig(path)
+
+        f_com, axs = plt.subplots(2,1, sharey=True)
+        axs[0].plot(self.timesteps,self.cmd[:,1])
+        axs[0].set_title('linear vel')
+        axs[1].plot(self.timesteps,self.cmd[:,1])
+        axs[1].set_title('angular vel')
+        path = os.path.join(self.dir,'commands.png')
+        plt.savefig(path)
+
+        f_a= plt.plot( self.timesteps,self.alpha)
+        plt.legend(['usr_a','ca_a','ts_a'])
+        path = os.path.join(self.dir,'alpha.png')
+        plt.savefig(path)
+
+
+        print('Plots saved in: ',self.dir)
+
+        if not self.description=='':
+            with open(os.path.join(self.dir,'description.txt'), mode='w') as f:
+                f.write(self.description)
+
+        if show:
+            plt.show()
+
+    def close(self):
+        plt.close('all')
+
+    def save_dict(self):
+        dict = {
+            'timesteps':self.timesteps,
+            'usr_cmd':self.usr_cmd,
+            'ca_cmd':self.ca_cmd,
+            'ts_cmd':self.ts_cmd,
+            'cmd':self.cmd,
+            'alpha':self.alpha,
+            'env':self.env,
+            'goal':self.goal
+        }
+        where = os.path.join(self.dir,'plot_dict.pkl')
+        with open(where, 'wb') as handle:
+            pickle.dump(dict, handle, protocol=pickle.HIGHEST_PROTOCOL)
+
+    def load_dict(self,dict):
+        #where = os.path.join(self.dir,dict_name)
+        #with open(where, 'rb') as handle:
+        #    dict = pickle.load(handle)
+        self.timesteps=dict['timesteps']
+        self.usr_cmd=dict['usr_cmd']
+        self.ca_cmd=dict['ca_cmd']
+        self.ts_cmd=dict['ts_cmd']
+        self.alpha=dict['alpha']
+        self.cmd=dict['cmd']
+        
+def clamp_angle(theta):
+    sign=np.sign(theta)
+    theta = (abs(theta)%6.2832)*sign  # 2*np.pi
+    if theta>np.pi:theta = theta-2*np.pi
+    elif theta<-np.pi:theta = theta+2*np.pi
+    return theta
+
+
+
+
+
 

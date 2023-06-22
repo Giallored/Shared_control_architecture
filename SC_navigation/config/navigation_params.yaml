@@ -4,9 +4,9 @@ training: #namespace
     hidden2: 300            #hidden num of second fully connect layer 
     rate: 0.001             #learning rate
     prate: 0.0001           #policy net learning rate (only for DDPG)
-    warmup: 10 #100             #time without training but only filling the replay memory
+    warmup: 10             #time without training but only filling the replay memory
     discount: 0.99          
-    bsize: 1 #64               #minibatch size
+    bsize: 8               #minibatch size
     rmsize: 6000000         #memory size
     window_length: 1         
     tau: 0.001              #moving average for target network
@@ -14,36 +14,39 @@ training: #namespace
     ou_sigma: 1.2           #noise sigma
     ou_mu: 0                #noise mu
     validate_episodes: 20   #how many episode to perform during validate experiment
-    max_episode_length: 500
+    max_episode_length: 600
     validate_steps: 2000    #how many steps to perform a validate experiment
     output: 'output'        #where to save the stuff
+    parent_dir: '/home/adriano/Desktop/thesis_ws/src/Shared_control_architecture/SC_navigation'
     debug: 'debug'
     init_w: 0.003
     train_iter: 200000      #'train iters each timestep
-    epsilon: 50000          #linear decay of exploration policy
+    epsilon_decay: 0.999
+    epsilon: 0.8          #linear decay of exploration policy
+    max_epochs: 100
     seed: -1
     delta_goal: 1.0
 
 rewards:
     R_safe: -5 #
     R_col: -1000
-    R_goal: -0.1
-    R_end: 100
-    R_alpha: 10 #
-    R_cmd: 1
+    R_goal: -1
+    R_end: 1000
+    R_alpha: -10 #
+    R_cmd: -10
   
 
 controller:
-    mode: 'train'           #support option: train/test/direct
+    #mode: 'train'           #support option: train/test/direct
     rate: 10
     verbose: False
-    env: 'inventory'        #which is the world you are using
+    env: 'office'  #'inventory_intensive'        #which is the world you are using
 
 
     #for collision avoidance
-    delta_coll: 0.7
-    K_lin: 0.0
-    K_ang: 0.2
+    delta_coll: 1.0
+    K_lin: 1 #0.5
+    K_ang: 1 #0.5
 
     #tiago
     taigoMBclear: 0.25

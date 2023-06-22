@@ -4,11 +4,11 @@ import rospy
 from SC_navigation.navigation_controller import Controller
 from RL_agent.utils import HyperParams
 from SC_navigation.utils import get_output_folder
+import os
+
 
 if __name__ == '__main__':
     print('Lets go!')
-
-
 
     try:
         
@@ -16,13 +16,15 @@ if __name__ == '__main__':
         rate = rospy.get_param('/controller/rate') 
         env_name = rospy.get_param('/controller/env') 
         verbose=rospy.get_param('/controller/verbose') 
-        if not mode == 'direct':
-            train_param = HyperParams(rospy.get_param('/training')) 
-            train_param.output= get_output_folder(train_param.output, env_name)
-        else:
-            train_param=None
         
-        rospy.init_node('navigation_controller', anonymous=True)
+        if mode=='train':
+            is_training=True
+        else:
+            is_training=False
+        train_param = HyperParams(rospy.get_param('/training'),is_training) 
+        
+        
+        rospy.init_node('navigation_controller', anonymous=True,disable_signals=True)
         node =Controller(mode=mode,train_param=train_param,rate=rate,verbose=verbose)
         
         node.main()
