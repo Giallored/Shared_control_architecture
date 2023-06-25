@@ -5,13 +5,15 @@
 
     <arg name= "mode" default="test"/> 
     <arg name= "model" default=""/> 
+    <arg name= "env" default="generic"/>
 
     <!-- Launch the training system -->
-    <node pkg="user_pkg" name="user" type="user_AI.py"/>
+    <node pkg="user_pkg" name="user" type="user_AI.py" output="screen"/>
     
     <node pkg="SC_navigation" name="controller" type="controller.py" output="screen">
         <param name="mode" type="string" value="$(arg mode)" />
         <param name="model" type="string" value="$(arg model)"/>
+        <param name="env" type="string" value="$(arg env)"/>
     </node>
 
 </launch>

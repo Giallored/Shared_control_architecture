@@ -4,6 +4,8 @@ import numpy as np
 from scipy.spatial.transform import Rotation
 import time
 from gazebo_msgs.msg import ModelStates
+from gazebo_msgs.msg import ContactsState
+
 import os
 import matplotlib.pyplot as plt
 import pickle
@@ -19,14 +21,14 @@ class TIAgo():
 
     def set_MBpose(self,pose):
         self.mb_prev_position=self.mb_position
-        self.mb_position=Vec3_to_list(pose.position)
-        #turn orientation from quat to euler (in rad)
-        rot = Rotation.from_quat(Vec4_to_list(pose.orientation))
+        self.mb_position=pose.position
+        self.mb_orientation=pose.orientation
+        rot = Rotation.from_euler('xyz', self.mb_orientation, degrees=False)
         self.Tf_tiago_w = Pose2Homo(rot.as_matrix(),self.mb_position)
-        self.mb_orientation=rot.as_euler('xyz', degrees=False)
-
-    def get_MBpose(self):
-        return Vec3_to_list(self.mb_position),Vec3_to_listself.mb_position
+        #turn orientation from quat to euler (in rad)
+        #rot = Rotation.from_quat(Vec4_to_list(pose.orientation))
+        #self.Tf_tiago_w = Pose2Homo(rot.as_matrix(),self.mb_position)
+        #self.mb_orientation=rot.as_euler('xyz', degrees=False)
     
     def get_relative_pos(self,obj_pos):
         pos = obj_pos+[1]
@@ -84,18 +86,18 @@ def blend_commands(w_list,cmd_list,n=3):
     return v,om
 
 def compute_cls_obs(obs_list):
-        min_distace=999999999
-        cls_point = [0,0]
+        min_distace=math.inf
+        cls_point = [25.0,25.0]
         cls_id = 0
         cnt=0
         for obs in obs_list:
             distance = np.linalg.norm(obs)
             if distance<min_distace and distance > 0.0:
                 min_distace=distance
-                cls_obs=obs
+                cls_point=obs
                 cls_id=cnt
             cnt+=1
-        return cls_obs,min_distace
+        return cls_point,min_distace
         
         
 def from_cmd_msg(msg):
@@ -118,13 +120,24 @@ def get_sim_info():
     ms_msg = rospy.wait_for_message("/gazebo/model_states",ModelStates, timeout=None)
     ids = ms_msg.name
     poses = ms_msg.pose
-    #tiago_i = ids.index('tiago')
-    #ids.remove('tiago_i')
-    #tiago_pose = poses.pop(tiago_i)
+    tiago_pos = Vec3_to_list( poses[ids.index('tiago')].position)
     dict = {}
-    for id,pos in zip(ids,poses): dict[id]=pos
+    for id,pose in zip(ids,poses):
+        pos_i=Vec3_to_list(pose.position)
+        theta_i = quat2euler(Vec4_to_list(pose.orientation))
+        dist_i = np.linalg.norm(np.subtract(pos_i,tiago_pos))
+        obj = Object(id,pos_i,theta_i,dist_i)
+        dict[id]=obj
+
     
     return dict
+
+class Object():
+    def __init__(self, id:str, pos,theta, dist:float):
+        self.id=id
+        self.position=pos
+        self.orientation=theta
+        self.distance=dist
 
 
 def shout_down_routine(goal,reward):
@@ -282,6 +295,29 @@ def clamp_angle(theta):
     if theta>np.pi:theta = theta-2*np.pi
     elif theta<-np.pi:theta = theta+2*np.pi
     return theta
+
+class Contact():
+    def __init__(self,msg:ContactsState):
+        self.state=msg.states
+    
+    def check_contact(self):
+        if self.state==[]:
+            return False,None,None
+        else:
+            obj_1 = self.clean_name(self.state[0].collision1_name)
+            obj_2 = self.clean_name(self.state[0].collision2_name)
+            return True,obj_1,obj_2
+
+    def clean_name(self,name):
+        final_name=''
+        for l in name:
+            if l == ':':
+                break
+            else:
+                final_name+=l
+        return final_name 
+        
+
 
 
 

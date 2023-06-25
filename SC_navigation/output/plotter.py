@@ -6,16 +6,15 @@ import matplotlib.pyplot as plt
 def get_plots(parent_dir):
     for folder_name in os.listdir(parent_dir):
         check_plot = elegibility("plot_dict.pkl",parent_dir,folder_name)
-        check_frame = elegibility("frames.pkl",parent_dir,folder_name)
-        if check_frame:
+        #check_frame = elegibility("frames.pkl",parent_dir,folder_name)
+        if check_plot:
             print(f' - {folder_name} -> YES')
             plot = Plot(parent_dir,folder_name,"plot_dict.pkl")
-            print('pippo')
             plot.save_plot()
             plot.close()
             
-            frame = Frame(parent_dir,folder_name,"frames.pkl")
-            frame.save_plot()
+            #frame = Frame(parent_dir,folder_name,"frames.pkl")
+            #frame.save_plot()
         else:
             print(f' - {folder_name} -> NO')
 
@@ -106,7 +105,10 @@ class Plot():
         path = os.path.join(self.dir,'commands.png')
         plt.savefig(path)
 
-        f_a= plt.plot( self.timesteps,self.alpha)
+        plt.figure()
+        plt.plot(self.timesteps,self.alpha[:,0],'r-')
+        plt.plot(self.timesteps,self.alpha[:,1],'b-')
+        plt.plot(self.timesteps,self.alpha[:,2],'g-')
         plt.legend(['usr_a','ca_a','ts_a'])
         path = os.path.join(self.dir,'alpha.png')
         plt.savefig(path)

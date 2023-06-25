@@ -61,6 +61,9 @@ class DDPG(object):
         #use_cuda = torch.cuda.is_available()
         self.use_cuda = False
         if self.use_cuda: self.cuda()
+    
+    def update_hp(self):
+        self.epsilon*=self.epsilon_decay
         
 
 
@@ -71,17 +74,11 @@ class DDPG(object):
         self.episode_policy_loss=0.
 
     def update_policy(self):
-        #print('Update policy...')
         # Sample batch
-        #print('Sample:')
         s_batch,a_batch,r_batch,next_s_batch,t_batch = self.memory.sample_and_split(self.batch_size)
-        #print(' - size of s_batch: ',s_batch.shape)
-        #print(' - size of a_batch: ',a_batch.shape)
-        #print(' - size of r_batch: ',r_batch.shape)
-        #print(' - size of ns_batch: ',next_s_batch.shape)
+        
 
         # Prepare for the target q batch
-        #print(' - Prepare for the target q batch')
         torch.no_grad()
         next_s_tsr = to_tensor(next_s_batch,use_cuda=self.use_cuda)#, volatile=True)
 
@@ -96,7 +93,6 @@ class DDPG(object):
         target_q_batch = r_tsr + self.discount*t_tsr*next_q_val
 
         # Critic update
-        #print(' - Critic update')
         self.critic.zero_grad()
         a_tsr = to_tensor(a_batch,use_cuda=self.use_cuda)
         s_tsr = to_tensor(s_batch,use_cuda=self.use_cuda)
@@ -108,9 +104,6 @@ class DDPG(object):
 
         # Actor update
         self.actor.zero_grad()
-
-        #print(' - Actor update')
-
         s_tsr = to_tensor(s_batch,use_cuda=self.use_cuda)
         actor_output = self.actor(s_tsr)
         policy_loss = -self.critic([s_tsr,actor_output])
@@ -120,7 +113,6 @@ class DDPG(object):
         self.actor_optim.step()
 
         # Target update
-        #print(' - Target update')
         soft_update(self.actor_target, self.actor, self.tau)
         soft_update(self.critic_target, self.critic, self.tau)
 
@@ -128,8 +120,7 @@ class DDPG(object):
         self.episode_value_loss+=value_loss.item()
         self.episode_policy_loss+=policy_loss.item()
 
-        #print('Valuse loss is ',value_loss.item())
-        #print('Policy loss is ',policy_loss.item())
+
 
 
 
@@ -150,10 +141,7 @@ class DDPG(object):
         self.critic_target.cuda()
 
     def observe(self, r_t, s_t1, done):
-        #print('Observe:')
-        #print(' - state size:',self.s_t.shape)
-        #print(' - act size:',self.a_t.shape)
-        #print(' - reward size:',r_t.shape)
+        
         if self.is_training:
             self.memory.append(self.s_t, self.a_t, r_t, done) #append sample in memory
             self.s_t = s_t1 #update curr state
@@ -165,7 +153,7 @@ class DDPG(object):
         self.a_t = action
         return action
 
-    def select_action(self, s_t, decay_epsilon=True):
+    def select_action(self, s_t):
         #get the action from the actor
         s_tsr = to_tensor(np.array([s_t]),use_cuda=self.use_cuda)
         a_tsr = self.actor(s_tsr)
@@ -176,11 +164,7 @@ class DDPG(object):
             e= max(self.epsilon, 0)
             #action += self.is_training*max(self.epsilon, 0)*self.random_process.sample()
             action =  self.is_training*((1.0-e)*action+e*noise)
-        action = np.clip(action, -1., 1.)
-
-        if decay_epsilon:
-            self.epsilon *= self.epsilon_decay
-        
+        action = np.clip(action, -1., 1.)       
         self.a_t = action
         return action
 

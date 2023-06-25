@@ -8,13 +8,19 @@ from collections import deque
 from std_msgs.msg import Bool,Float64MultiArray
 
 class Trajectory_smooter():
-    def __init__(self,poly_degree=2, n_actions=3):
+    def __init__(self,poly_degree=2, n_actions=3,dt=0.15):
         self.poly_degree = poly_degree
         self.n_actions = n_actions
-        self.previous_time=0
-        self.last_actions = deque([],n_actions) #(time,v,omega)
-        for i in range(self.n_actions): self.last_actions.append([i*0.15,0,0])
-
+        self.dt=dt
+        self.reset()
+        
+    def reset(self):
+        self.previous_time=self.n_actions*self.dt
+        self.last_actions = deque([],self.n_actions) #(time,v,omega)
+        for i in range(self.n_actions):
+            self.last_actions.append([i*self.dt,0.,0.])
+    
+        
 
     def get_cmd(self,time):
         dt = time - self.previous_time

@@ -22,8 +22,6 @@ class Environment():
         self.max_steps=max_steps
         self.verbosity=verbosity
         self.n_actions = n_agents
-        #self.n_states = 100 #to setup
-        #self.obstacle_pos = [0]*self.n_states #to setup
         self.reset_sim = rospy.ServiceProxy('/gazebo/reset_world', Empty) #resets the simulation
         self.pause_sim = rospy.ServiceProxy('/gazebo/pause_physics', Empty)
         self.unpause_sim = rospy.ServiceProxy('/gazebo/unpause_physics', Empty)
@@ -32,6 +30,7 @@ class Environment():
         self.time=0
         self.laserScanner = LaserScanner()
         self.robot = robot
+        self.coll_flag=False
 
 
         #reward stuff
@@ -60,11 +59,12 @@ class Environment():
 
         #get the n_state as: n_ranges + 2 (usr_cmd)
         self.n_states = self.cur_observation.shape[0]
+        if self.verbosity: self.env.print_obj_dict()
 
         # read the model state to get the tiango and obstacle pose
         self.obj_dict = get_sim_info()
-        tiago_pose = self.obj_dict['tiago']
-        self.robot.set_MBpose(tiago_pose)
+
+        self.robot.set_MBpose(self.obj_dict['tiago'])
 
         #compute the list of possible goals
         objects =list(self.obj_dict.keys())
@@ -76,9 +76,18 @@ class Environment():
                 self.obs_ids.append(id)
         self.choose_goal()
 
+    def print_obj_dict(self):
+        print('Objects in the scene: ')
+        for o in self.obj_dict.values():
+            print(f"* {o.id}")
+            print(f' + position: {o.position}')
+            print(f' + orientation: {o.orientation}')
+            print(f' + distance: {o.distance}')
+
     def reset(self):
         self.reset_sim()
         self.step=0
+        self.coll_flag=False
         self.choose_goal()
         self.update()
     
@@ -93,7 +102,7 @@ class Environment():
 
     def update(self):
         self.obj_dict = get_sim_info()
-        self.goal_pos = Vec3_to_list(self.obj_dict[self.goal_id].position)
+        self.goal_pos = self.obj_dict[self.goal_id].position
         self.robot.set_MBpose(self.obj_dict['tiago'])        
         self.time = rospy.get_time()
         self.ls_ranges,self.obstacle_pos = self.laserScanner.get_obs_points()
@@ -103,36 +112,61 @@ class Environment():
     def make_step(self):
         #observation = self.get_observation()
         reward = self.get_reward()
-        if self.goal_check() or self.stuck_check() or self.coll_check() or self.step>=self.max_steps:
+        is_coll= self.coll_check()
+#        print('min_dist: ',x,' -> is_coll: ',is_coll)
+        is_goal = self.goal_check() 
+        is_stuck = self.stuck_check()
+        is_end = (self.step>=self.max_steps)
+        if is_goal or is_stuck or is_coll or is_end:
             done=True
         else:
             done = False
         return self.cur_observation, reward, done 
     
-    def goal_check(self):
+    def goal_check(self,stamp=True):
         if self.goal_dist<=self.delta_goal:
-            print('\nGoal riched!')
-            return True
-        else:
-            return False
-
-    def coll_check(self):
-        cls_obs,min_dist = compute_cls_obs(self.obstacle_pos)
-        if min_dist<=self.robot.clear:
-            print('\nCollision!')
+            if stamp:print('\nGoal riched!')
             return True
         else:
             return False
         
+    def callback_collision(self,data):
+        contact=Contact(data)
+        flag,obj_1,obj_2=contact.check_contact()
+        if flag and self.coll_flag==False:
+            self.coll_flag=True
+            print(f'---\nCollision: {obj_1} - {obj_2}')
+    
+    def coll_check(self):
+        if self.coll_flag:
+            return True
+        else:
+            return False
 
-    def stuck_check(self):
+
+    #def coll_check(self,stamp=True):
+    #    r_pos_2d = self.robot.mb_position[0:2]
+    #    min_dist=99999
+    #    obj_cls=''
+    #    for obj_id in self.obs_ids:
+    #        pos_2d = self.obj_dict[obj_id].position[0:2]
+    #        dist_i=np.linalg.norm(np.subtract(pos_2d,r_pos_2d))
+    #        if dist_i<=self.robot.clear:
+    #            if stamp:print(f'Collision with {obj_id}')
+    #            return True,None
+    #        if dist_i<min_dist:
+    #            min_dist=dist_i
+    #            obj_cls=obj_id
+    #    return False,min_dist
+#
+    def stuck_check(self,stamp=True):
         if self.robot.mb_position == self.robot.prev_mb_position:
             self.stacked_steps += 1
         else:
             self.stacked_steps =0
 
         if self.stacked_steps >= self.stacked_th:
-            print('\nIs stucked!')
+            if stamp:print('\nIs stucked!')
             self.stacked_steps=0
             return True
         else:
@@ -154,13 +188,16 @@ class Environment():
     def get_reward(self):
 
         # safety oriented
-        cls_obs,min_dist = compute_cls_obs(self.obstacle_pos)
-        if min_dist>=self.delta_coll:
-            r_safety = 0
-        elif min_dist>self.robot.clear and min_dist<self.delta_coll:
-            r_safety = (self.delta_coll-min_dist)*self.R_safe
-        else:
+        is_coll = self.coll_check()
+        if is_coll:
             r_safety = self.R_col
+        else:
+            r_safety=0
+            #if min_dist>=self.delta_coll:
+            #    r_safety = 0
+            #else:
+            #    r_safety = (self.delta_coll-min_dist)*self.R_safe
+            
 
         # arbitration oriented
         r_alpha = 0#self.R_alpha*np.linalg.norm(np.subtract(self.prev_act,self.cur_act))
@@ -192,16 +229,9 @@ class Environment():
               
     def choose_goal(self):
         self.goal_id = random.sample(self.obs_ids,1)[0]
-        #self.goal_id = 'bookshelf_1'
-        self.goal_pos = Vec3_to_list(self.obj_dict[self.goal_id].position)
-
-    def set_goal(self,goal_id:str):
-        self.goal_id=goal_id
-        try:
-            self.goal_pos = Vec3_to_list(self.obj_dict[self.goal_id].position)
-        except rospy.ROSInterruptException:
-            pass
-    
+        
+        #self.goal_id = '20x100cm_cylinder'
+        self.goal_pos = self.obj_dict[self.goal_id].position
 
 
 

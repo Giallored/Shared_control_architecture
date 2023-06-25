@@ -12,11 +12,10 @@ from SC_navigation.utils import *
 
 class User():
     
-    def __init__(self,rate=10):
-        rate = rospy.get_param('/controller/rate') 
+    def __init__(self,rate=5):
+        rate = rospy.get_param('/controller/usr_rate') 
         self.tiago=TIAgo()
         self.pub = rospy.Publisher('usr_cmd_vel', Twist, queue_size=1)
-        self.pub_goal = rospy.Publisher('goal', String, queue_size=1)
         self.goal_id='tiago'
         
         #self.pub = rospy.Publisher('usr_cmd_vel', Float64MultiArray, queue_size=1)
@@ -46,73 +45,66 @@ class User():
             self.rate.sleep()
 
     def get_cmd(self):
-        goal_rel_pos = self.tiago.get_relative_pos(self.goal_pos)
-        goal_dist = np.linalg.norm(goal_rel_pos)
-        
-        theta = np.arctan2(goal_rel_pos[1],goal_rel_pos[0])
-        theta = clamp_angle(theta)
+        #goal_rel_pos = self.tiago.get_relative_pos(self.goal_pos)
+        #goal_dist = np.linalg.norm(goal_rel_pos)
+        #theta = np.arctan2(goal_rel_pos[1],goal_rel_pos[0])
+        #theta = clamp_angle(theta)
+        #print('theta: ', theta)
 
-        print('--')
-        print('dist: ',goal_dist)
-        print('theta: ',theta)
-        print('theta_TH: ',self.theta_th)
+        dist,theta = self.get_goal_dist()
+        #get the probability to turn
+        if abs(theta)>self.theta_th:
+            p=1.0
+        else:
+            p = (abs(theta)/self.theta_th)**2
+        cmd = self.e_greedy_act(dist,theta,p)
+        return cmd
+    
 
-        if goal_dist<0.01:
+    def get_goal_dist(self):
+        dist = np.subtract(self.goal_pos, self.tiago.mb_position)[0:2] #2d dist
+        l_dist = np.linalg.norm(dist)
+        a_dist = np.arctan2(dist[1],dist[0])
+        r_theta =clamp_angle(self.tiago.mb_orientation[2])
+        theta = a_dist-r_theta
+        return l_dist,theta
+
+    def e_greedy_act(self,dist,theta,p):
+        e= random.random()
+        if dist<0.01:
             return self.stop_cmd 
         else:
             #get the linear command
-            if abs(theta)>=self.theta_th:
+            if abs(theta)<=self.theta_th:
+                v = 0.8
+                om=0.0
+            else:
                 v = 0.0
-            else:
-                v = 1.0
             #get the angular command
-            if theta>0:
-                om= 1.0
+            if e<=p:
+                om = np.sign(theta)*1.0
+                #if theta>0:
+                #    om= 1.0
+                #else:
+                #    om= -1.0
             else:
-                om= -1.0
-            print('Command: ',[v,om])
-            return cmd_to_twist([v,om])
+                om=0.0
+            cmd = cmd_to_twist([v,om])
+            return cmd
 
-        #get the probability to get streight
-        #if abs(theta)>=self.theta_th:
-        #    p=0.0
-        #else:
-        #    p = self.theta_th/abs(theta)
-#
-        #cmd = self.e_greedy_act(theta,p)
-        #
-        #return cmd
-        
 
-    def e_greedy_act(self,theta,p):
-        epsilon= random.random()
-        ##print(' - e: ',epsilon)
-        if epsilon<=p: #straingth
-            
-            print('UP')
-            return self.up_cmd
-            
-        else:       #turn
-            if theta>0:
-                print('RIGHT')
-                return self.right_cmd
-            else:
-                print('LEFT')
-                return self.left_cmd
+
     
     def update(self):
         self.obj_dict = get_sim_info()
-        self.goal_pos = Vec3_to_list(self.obj_dict[self.goal_id].position)
+        self.goal_pos = self.obj_dict[self.goal_id].position
         self.tiago.set_MBpose(self.obj_dict['tiago'])  
-     
-    def choose_goal(self):
-        obj_dict = get_sim_info()
-        obs_ids = list(obj_dict.keys())
-        obs_ids.remove('tiago')
-        return random.sample(obs_ids,1)[0]
-    
+
     def set_goal(self,data):
-        self.goal_id = data.data
+        if data.data == 'END':
+            rospy.signal_shutdown('Terminate training')
+        else:
+            self.goal_id = data.data
         #print(f"The new GOAL of the simulation is '{self.goal_id}'")
 
 if __name__ == '__main__':
