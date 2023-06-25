@@ -7,7 +7,7 @@ training: #namespace
     warmup: 10             #time without training but only filling the replay memory
     discount: 0.99          
     bsize: 8               #minibatch size
-    rmsize: 6000000         #memory size
+    rmsize: 1000 #6000000         #memory size
     window_length: 1         
     tau: 0.001              #moving average for target network
     ou_theta: 0.15          #noise theta
@@ -21,11 +21,11 @@ training: #namespace
     debug: 'debug'
     init_w: 0.003
     train_iter: 200000      #'train iters each timestep
-    epsilon_decay: 0.99
-    epsilon:  0.8          #linear decay of exploration policy
+    epsilon_decay: 0.995
+    epsilon:  0.6          #linear decay of exploration policy
     max_epochs: 100
     seed: -1
-    delta_goal: 1.5
+    delta_goal: 0.4
 
 rewards:
     R_safe: -5 #

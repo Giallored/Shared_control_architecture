@@ -60,6 +60,9 @@ class RingBuffer(object):
             raise RuntimeError()
         self.data[(self.start + self.length - 1) % self.maxlen] = v
 
+    def get_capacity(self):
+        return round(self.length/self.maxlen*100,3)
+
 
 def zeroed_observation(observation):
     if hasattr(observation, 'shape'):

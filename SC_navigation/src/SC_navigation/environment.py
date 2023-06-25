@@ -30,7 +30,7 @@ class Environment():
         self.time=0
         self.laserScanner = LaserScanner()
         self.robot = robot
-        self.coll_flag=False
+        self.is_coll=False
 
 
         #reward stuff
@@ -71,9 +71,12 @@ class Environment():
         objects.remove('tiago')
         objects.remove('ground_plane')
         self.obs_ids=[]
+        self.goal_list=[]
         for id in objects:
             if not id[0:4] == 'wall':
                 self.obs_ids.append(id)
+                if id[0:4]=='goal':
+                    self.goal_list.append(id)
         self.choose_goal()
 
     def print_obj_dict(self):
@@ -87,7 +90,7 @@ class Environment():
     def reset(self):
         self.reset_sim()
         self.step=0
-        self.coll_flag=False
+        self.is_coll=False
         self.choose_goal()
         self.update()
     
@@ -112,12 +115,10 @@ class Environment():
     def make_step(self):
         #observation = self.get_observation()
         reward = self.get_reward()
-        is_coll= self.coll_check()
-#        print('min_dist: ',x,' -> is_coll: ',is_coll)
         is_goal = self.goal_check() 
         is_stuck = self.stuck_check()
         is_end = (self.step>=self.max_steps)
-        if is_goal or is_stuck or is_coll or is_end:
+        if is_goal or is_stuck or self.is_coll or is_end:
             done=True
         else:
             done = False
@@ -133,16 +134,10 @@ class Environment():
     def callback_collision(self,data):
         contact=Contact(data)
         flag,obj_1,obj_2=contact.check_contact()
-        if flag and self.coll_flag==False:
-            self.coll_flag=True
+        if flag and self.is_coll==False:
+            self.is_coll=True
             print(f'---\nCollision: {obj_1} - {obj_2}')
-    
-    def coll_check(self):
-        if self.coll_flag:
-            return True
-        else:
-            return False
-
+  
 
     #def coll_check(self,stamp=True):
     #    r_pos_2d = self.robot.mb_position[0:2]
@@ -188,8 +183,7 @@ class Environment():
     def get_reward(self):
 
         # safety oriented
-        is_coll = self.coll_check()
-        if is_coll:
+        if self.is_coll:
             r_safety = self.R_col
         else:
             r_safety=0
@@ -226,9 +220,9 @@ class Environment():
 
     def set_goal_dist(self):
         self.goal_dist = np.linalg.norm(np.subtract(self.goal_pos,self.robot.mb_position))
-              
+
     def choose_goal(self):
-        self.goal_id = random.sample(self.obs_ids,1)[0]
+        self.goal_id = random.sample(self.goal_list,1)[0]
         
         #self.goal_id = '20x100cm_cylinder'
         self.goal_pos = self.obj_dict[self.goal_id].position

@@ -75,7 +75,10 @@ class Collision_avoider():
 
         dist_list = [np.linalg.norm(p) for p in poin_cloud]
         sorted_cloud =poin_cloud[np.argsort(dist_list)]
-        min_dist = np.linalg.norm(sorted_cloud[0])
+        try:
+            min_dist = np.linalg.norm(sorted_cloud[0])
+        except:
+            return [0.0,0.0]
         
         if min_dist<=self.th_dist:
             X_obs = self.get_proj_point(sorted_cloud)
@@ -91,8 +94,8 @@ class Collision_avoider():
             v_cmd = -self.K_lin*(dx_d+dy_d)
             om_cmd = -self.K_ang*(dtheta_d)
             return [v_cmd,om_cmd]
-        else:
-            return [0.,0.]
+        else:return [0.,0.]
+            
         
     
     def get_frame(self,poin_cloud,cluster,X_obs,centroid):

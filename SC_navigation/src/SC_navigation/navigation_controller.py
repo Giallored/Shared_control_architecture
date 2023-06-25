@@ -165,6 +165,7 @@ class Controller():
             print(' - goal: ',self.env.goal_id)
             print(' - steps: ',self.env.step)
             print(' - epsilon: ',self.agent.epsilon)
+            print(f' - mem. capacity: {self.agent.memory.actions.get_capacity()}%')
             print(' - episode mean reward: ',mean_reward)
             print(' - episode mean val. loss: ',mean_val_loss)
             print(' - episode mean pol. loss: ',mean_policy_loss)
