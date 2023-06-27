@@ -66,7 +66,7 @@ class HyperParams:
         self.max_epochs=hp_dict['max_epochs']
         self.is_training=is_training
         self.epsilon_decay=hp_dict['epsilon_decay']
-        
+        self.n_frame=hp_dict['n_frame']
 
 
 

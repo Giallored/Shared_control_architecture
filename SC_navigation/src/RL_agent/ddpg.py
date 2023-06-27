@@ -4,7 +4,7 @@ import numpy as np
 import torch
 import torch.nn as nn
 from torch.optim import Adam
-
+from collections import deque
 from RL_agent.model import (Actor, Critic)
 from RL_agent.memory import SequentialMemory
 from RL_agent.random_process import OrnsteinUhlenbeckProcess
@@ -55,6 +55,7 @@ class DDPG(object):
         #self.s_t = None # Most recent state
         self.a_t = [1.0,0.0,0.0] # Most recent action
         self.is_training = args.is_training
+        self.n_frame=args.n_frame
         self.episode_value_loss=0.
         self.episode_policy_loss=0.
 
@@ -68,6 +69,7 @@ class DDPG(object):
 
 
     def reset(self,state):
+        self.state=deque([state],maxlen=1)
         self.s_t=state
         self.a_t=np.array([1.0,0.0,0.0])
         self.episode_value_loss=0.
@@ -141,10 +143,11 @@ class DDPG(object):
         self.critic_target.cuda()
 
     def observe(self, r_t, s_t1, done):
-        
         if self.is_training:
-            self.memory.append(self.s_t, self.a_t, r_t, done) #append sample in memory
-            self.s_t = s_t1 #update curr state
+            self.memory.append(self.state, self.a_t, r_t, done) #append sample in memory
+            self.state.append(s_t1)
+            #self.memory.append(self.s_t, self.a_t, r_t, done) #append sample in memory
+            #self.s_t = s_t1 #update curr state
 
     def random_action(self):
         # using the Dirichlet distrution to get the action to sum to 1
@@ -156,6 +159,7 @@ class DDPG(object):
     def select_action(self, s_t):
         #get the action from the actor
         s_tsr = to_tensor(np.array([s_t]),use_cuda=self.use_cuda)
+
         a_tsr = self.actor(s_tsr)
         action = to_numpy(a_tsr,self.use_cuda).squeeze(0)
         if self.is_training:

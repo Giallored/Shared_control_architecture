@@ -3,7 +3,9 @@ from std_srvs.srv import Empty
 import numpy as np
 import random
 from SC_navigation.utils import *
-from gazebo_msgs.msg import ModelStates
+from gazebo_msgs.msg import ModelStates,ModelState
+from gazebo_msgs.srv import SetModelState
+
 from SC_navigation.laser_scanner import LaserScanner
 
 
@@ -58,7 +60,7 @@ class Environment():
         self.cur_observation =self.get_observation()
 
         #get the n_state as: n_ranges + 2 (usr_cmd)
-        self.n_states = self.cur_observation.shape[0]
+        self.n_observations = self.cur_observation.shape[0]
         if self.verbosity: self.env.print_obj_dict()
 
         # read the model state to get the tiango and obstacle pose
@@ -89,6 +91,8 @@ class Environment():
 
     def reset(self):
         self.reset_sim()
+        self.change_obj_pose()
+        print('continue...')
         self.step=0
         self.is_coll=False
         self.choose_goal()
@@ -194,7 +198,7 @@ class Environment():
             
 
         # arbitration oriented
-        r_alpha = 0#self.R_alpha*np.linalg.norm(np.subtract(self.prev_act,self.cur_act))
+        r_alpha = self.cur_act[1]#self.R_alpha*np.linalg.norm(np.subtract(self.prev_act,self.cur_act))
 
         # command oriented 
         r_cmd = self.R_cmd*np.linalg.norm(np.subtract(self.cur_cmd,self.cur_usr_cmd))
@@ -227,6 +231,32 @@ class Environment():
         #self.goal_id = '20x100cm_cylinder'
         self.goal_pos = self.obj_dict[self.goal_id].position
 
+
+    def change_obj_pose(self):
+        print('CHANGE OBJ POSITION')
+        radius =6.0
+        #n = 10
+        #obj_list = random.sample(self.obs_ids, n)
+        for obj_id in self.obs_ids:
+            state_msg = ModelState()
+            ro_i = random.random()*radius + 2.0
+            theta_i = random.random()*(2*np.pi)
+            if obj_id[0:4]=='goal': h= 0.01 
+            else: h=0.3
+            state_msg.model_name = obj_id
+            state_msg.pose.position.x = ro_i*np.cos(theta_i)
+            state_msg.pose.position.y = ro_i*np.sin(theta_i)
+            state_msg.pose.position.z = h
+            state_msg.pose.orientation.x = 0
+            state_msg.pose.orientation.y = 0
+            state_msg.pose.orientation.z = 0
+            state_msg.pose.orientation.w = 0
+            rospy.wait_for_service('/gazebo/set_model_state')
+            try:
+                set_state = rospy.ServiceProxy('/gazebo/set_model_state', SetModelState)
+                resp = set_state( state_msg )
+            except:
+                print("Service call failed: %s")
 
 
 

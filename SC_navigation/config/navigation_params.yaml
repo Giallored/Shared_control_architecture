@@ -26,11 +26,12 @@ training: #namespace
     max_epochs: 100
     seed: -1
     delta_goal: 0.4
+    n_frame: 4
 
 rewards:
     R_safe: -5 #
     R_col: -1000
-    R_goal: -1
+    R_goal: -10
     R_end: 1000
     R_alpha: -10 #
     R_cmd: -10

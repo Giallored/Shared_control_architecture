@@ -28,6 +28,8 @@ class Controller():
         self.rate=rospy.Rate(rate) # 10hz        
         self.verbose=verbose
         self.load_model = rospy.get_param('/controller/model')
+        self.n_agents=3
+        self.n_acts = 2
 
         #training stuff
         self.hyperParam = train_param
@@ -54,13 +56,15 @@ class Controller():
                                delta_goal= rospy.get_param('/training/delta_goal'),
                                max_steps=self.hyperParam.max_episode_length,
                                robot = self.tiago)
-
-        self.agent = DDPG(self.env.n_states,self.env.n_actions,self.hyperParam)
+        self.n_state = self.n_agents*self.n_acts+self.env.n_observations
+        print('obs shape!: ',self.env.n_observations)
+        print('state shape !: ',self.n_state)
+        self.agent = DDPG(self.n_state,self.env.n_actions,self.hyperParam)
         self.agent.reset(self.env.cur_observation)
         self.pub=rospy.Publisher('mobile_base_controller/cmd_vel', Twist, queue_size=1)
         self.pub_goal=rospy.Publisher('goal',String,queue_size=1)
 
-
+        self.cur_cmds=[0.0]*self.n_acts*self.n_agents
         #directories
 
     
@@ -138,8 +142,7 @@ class Controller():
 
         #get results fom the previous action and let the agent observe
         new_observation,reward,done = self.env.make_step()
-        self.agent.observe(reward, new_observation, done)
-
+        
         if self.mode == 'train' and (self.epoch>0 or self.env.step > self.hyperParam.warmup):
             # update policy only if the warmup is finished
             self.agent.update_policy()
@@ -213,6 +216,14 @@ class Controller():
         usr_cmd = twist_to_cmd(data)
         ca_cmd = self.ca_controller.get_cmd(self.env.obstacle_pos)
         ts_cmd = self.ts_controller.get_cmd(self.env.time)
+        cur_cmds = usr_cmd+ca_cmd+ts_cmd
+
+        #assemble and observe the last episode data
+        state=np.append(cur_cmds,new_observation)
+        print('state shape: ', state.shape)
+        #self.agent.observe(reward, new_observation, done)
+        self.agent.observe(reward, state, done)
+
 
         #update time
         t=rospy.get_time()-self.start_time
@@ -224,7 +235,8 @@ class Controller():
             alpha = self.agent.random_action()
             tag='warm'
         else:
-            alpha = self.agent.select_action(self.observation)
+            alpha = self.agent.select_action(state)
+            #alpha = self.agent.select_action(self.observation)
             tag=self.mode
         print(f"STEP: {self.env.step} - Alpha = {[round(x,3) for x in alpha]} ({tag}) - dt = {dt}", end="\r", flush=True)
         #alpha=[1.,0.,0.]

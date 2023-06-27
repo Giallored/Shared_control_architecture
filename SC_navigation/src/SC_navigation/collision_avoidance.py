@@ -80,21 +80,21 @@ class Collision_avoider():
         except:
             return [0.0,0.0]
         
-        if min_dist<=self.th_dist:
-            X_obs = self.get_proj_point(sorted_cloud)
-            if X_obs[1]>0: sign=1      #obstalce in thr Rx ==> CCW
-            else: sign=-1                #obstalce in thr Lx ==> CW
-            dU_r=self.d_Ur(X_obs,[0,0])   
-            F_v = np.array([dU_r[1],-dU_r[0]]) * sign
-            dx_d = F_v[0]
-            dy_d = F_v[1]
-            dtheta_d = np.arctan2(dy_d,dx_d)
-            dtheta_d = clamp_angle(dtheta_d)
-            
-            v_cmd = -self.K_lin*(dx_d+dy_d)
-            om_cmd = -self.K_ang*(dtheta_d)
-            return [v_cmd,om_cmd]
-        else:return [0.,0.]
+        #if min_dist<=self.th_dist:
+        X_obs = self.get_proj_point(sorted_cloud)
+        if X_obs[1]>0: sign=1      #obstalce in thr Rx ==> CCW
+        else: sign=-1                #obstalce in thr Lx ==> CW
+        dU_r=self.d_Ur(X_obs,[0,0])   
+        F_v = np.array([dU_r[1],-dU_r[0]]) * sign
+        dx_d = F_v[0]
+        dy_d = F_v[1]
+        dtheta_d = np.arctan2(dy_d,dx_d)
+        dtheta_d = clamp_angle(dtheta_d)
+        
+        v_cmd = -self.K_lin*(dx_d+dy_d)
+        om_cmd = -self.K_ang*(dtheta_d)
+        return [v_cmd,om_cmd]
+        #else:return [0.,0.]
             
         
     
