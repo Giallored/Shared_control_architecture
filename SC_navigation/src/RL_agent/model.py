@@ -35,8 +35,16 @@ class Actor(nn.Module):
         out = self.relu(out)
         out = self.fc3(out)
         out = self.tanh(out)
-        out = self.softmax(out) #to make the out sum to 1 
+        #out = self.softmax(out) #to make the out sum to 1 
         return out
+    
+    def noisy_softmax(self,z_batch,w_list:list):
+        for z,w in zip(z_batch,w_list):
+            x = z+torch.ones((3))*w
+            out = self.softmax(x)
+        return out
+    
+    
 
 class Critic(nn.Module):
     def __init__(self, nb_states, nb_actions, hidden1=400, hidden2=300, init_w=3e-3):
@@ -54,8 +62,6 @@ class Critic(nn.Module):
     
     def forward(self, xs):
         x, a = xs
-        #print('x size = ',x.shape)
-        #print('a size = ',a.shape)
         out = self.fc1(x)
         out = self.relu(out)
         # debug()

@@ -50,13 +50,25 @@ class DDPG(object):
         self.tau = args.tau
         self.discount = args.discount
         self.epsilon_decay=args.epsilon_decay
-
-        # 
         self.epsilon = args.epsilon
-        #self.s_t = None # Most recent state
-        self.a_t = [1.0,0.0,0.0] # Most recent action
         self.is_training = args.is_training
         self.n_frame=args.n_frame
+
+        # Hyper-parameters for the dynamcally changing SD of the noise (Gaussian)
+        self.sigma_w = 0.3 # noise SD 
+        self.sigma_th = 0.3 # threshold on the noise SD
+        self.dist_avg = 0.2 #avg distance between 
+        self.dist_d = 0.3  #desired distance between a_opt and a_noisy
+        self.dist_d_decay=0.999
+        self.sm_dist = 0.8 # smoothing factors in the exponential moving avg for the distance
+        self.sm_sd = 0.5 # smoothing factors in the exponential moving avg for the SD
+        self.sf = 1.01 #scaling factor
+
+        self.sigma_w_target = 0.1 # noise SD for the target 
+
+
+        #initializations
+        self.a_t = [1.0,0.0,0.0] # Most recent action
         self.episode_value_loss=0.
         self.episode_policy_loss=0.
 
@@ -66,6 +78,7 @@ class DDPG(object):
     
     def update_hp(self):
         self.epsilon*=self.epsilon_decay
+        self.dist_d*=self.dist_d_decay
         
 
 
@@ -81,16 +94,17 @@ class DDPG(object):
         # Sample batch
         s_batch,a_batch,r_batch,next_s_batch,t_batch = self.memory.sample_and_split(self.batch_size)
         # Prepare for the target q batch
-        torch.no_grad()
 
-        next_s_tsr = to_tensor(next_s_batch,use_cuda=self.use_cuda)#, volatile=True)
+        # compute target actions
+        with torch.no_grad(): 
+            next_s_tsr = to_tensor(next_s_batch,use_cuda=self.use_cuda)#, volatile=True)
+            target_a_raw = self.actor_target(next_s_tsr) #output of the actor target
+            w = np.random.normal(0, self.sigma_w_target, self.batch_size) #noise
+            target_a_tsr = self.actor_target.noisy_softmax(target_a_raw,w)
 
-        with torch.no_grad():
-            t_act_out = self.actor_target(next_s_tsr) #output of the actor target
-
+        #compute target
         self.critic_target.zero_grad()
-        next_q_val = self.critic_target([next_s_tsr,t_act_out])
-        
+        next_q_val = self.critic_target([next_s_tsr,target_a_tsr])
         r_tsr = to_tensor(r_batch,use_cuda=self.use_cuda)
         t_tsr = to_tensor(t_batch.astype(np.float),use_cuda=self.use_cuda)
         target_q_batch = r_tsr + self.discount*t_tsr*next_q_val
@@ -100,10 +114,7 @@ class DDPG(object):
         a_tsr = to_tensor(a_batch,use_cuda=self.use_cuda)
         #s_tsr = to_tensor(s_batch,use_cuda=self.use_cuda)
         s_tsr = to_tensor(np.array(s_batch),use_cuda=self.use_cuda).reshape(self.batch_size,-1)
-
-
         q_batch = self.critic([s_tsr,a_tsr])
-        
         value_loss = criterion(q_batch, target_q_batch)
         value_loss.backward()
         self.critic_optim.step()
@@ -112,10 +123,9 @@ class DDPG(object):
         self.actor.zero_grad()
         #s_tsr = to_tensor(s_batch,use_cuda=self.use_cuda)
         s_tsr = to_tensor(np.array(s_batch),use_cuda=self.use_cuda).reshape(self.batch_size,-1)
-
-        actor_output = self.actor(s_tsr)
-        policy_loss = -self.critic([s_tsr,actor_output])
-
+        a_raw = self.actor(s_tsr)
+        a_opt = self.actor.softmax(a_raw)
+        policy_loss = -self.critic([s_tsr,a_opt])
         policy_loss = policy_loss.mean()
         policy_loss.backward()
         self.actor_optim.step()
@@ -163,23 +173,65 @@ class DDPG(object):
         return action
 
     def select_action(self, s_t):
-        #get the action from the actor
-        #s_tsr = to_tensor(np.array([s_t]),use_cuda=self.use_cuda)
+
+        #assemble the state
         state=deepcopy(self.state)
         state.append(s_t)
         s_tsr = to_tensor(np.array(state),use_cuda=self.use_cuda).reshape(-1)
-        a_tsr = self.actor(s_tsr)
-        action = to_numpy(a_tsr,self.use_cuda)#.squeeze(0)
-        print(f'------\n Alpha_before: {action}\n')
+
+        #get the optimal action
+        a_raw = self.actor(s_tsr)
+        a_opt = self.actor.softmax(a_raw)
+
         if self.is_training:
-            #insert some noise
-            noise= np.random.dirichlet(np.ones(3),size=1)[0]
-            e= max(self.epsilon, 0)
-            #action += self.is_training*max(self.epsilon, 0)*self.random_process.sample()
-            action =  self.is_training*((1.0-e)*action+e*noise)
-        action = np.clip(action, -1., 1.)       
-        self.a_t = action
+            w = np.random.normal(0, self.sigma_w, 1)  #Gaussian Noise
+            a_noise = self.actor.noisy_softmax(a_raw,w)
+            action = to_numpy(a_noise,self.use_cuda)
+            self.update_noise(a_opt,a_noise)
+
+        else:
+            action = to_numpy(a_opt,self.use_cuda)
+
         return action
+
+
+
+        #get the action from the actor
+        #s_tsr = to_tensor(np.array([s_t]),use_cuda=self.use_cuda)
+        
+        #a_tsr = 
+        #action = to_numpy(a_tsr,self.use_cuda)#.squeeze(0)
+        #print(f'------\n Alpha_before: {action}\n')
+        #if self.is_training:
+        #    #insert some noise
+        #    noise= np.random.dirichlet(np.ones(3),size=1)[0]
+        #    e= max(self.epsilon, 0)
+        #    #action += self.is_training*max(self.epsilon, 0)*self.random_process.sample()
+        #    action =  self.is_training*((1.0-e)*action+e*noise)
+        #action = np.clip(action, -1., 1.)       
+        #self.a_t = action
+        
+    
+    
+    def update_noise(self,a_opt,a_noise):
+        # compute the avg distance between a_opt and a_noise
+        self.dist_avg = (1-self.sm_dist)*self.avg_dist + self.sm_dist*np.linalg.norm(a_opt-a_noise)
+
+        #update the scaled variance
+        if self.sigma_w < self.sigma_th:
+            #variance decreases/increases as the distace is higher/lower than the desired distace.
+            self.variance = self.sigma_w * (self.sf**np.sign(self.dist_d-self.dist_avg))
+        else:
+            self.variance = self.sigma_th
+
+        #update the SD
+        self.sigma_w = (1-self.sm_sd )*self.sigma_w + self.sm_sd*self.variance
+
+        
+
+            
+
+
 
 
     def load_weights(self, output_dir):
