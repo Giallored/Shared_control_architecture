@@ -15,7 +15,7 @@ def fanin_init(size, fanin=None):
 class Actor(nn.Module):
     def __init__(self, nb_states, nb_actions, hidden1=400, hidden2=300, init_w=3e-3):
         super(Actor, self).__init__()
-        self.fc1 = nn.Linear(nb_states, hidden1)
+        self.fc1 = nn.Linear(int(nb_states), hidden1)
         self.fc2 = nn.Linear(hidden1, hidden2)
         self.fc3 = nn.Linear(hidden2, nb_actions)
         self.relu = nn.ReLU()
@@ -34,7 +34,7 @@ class Actor(nn.Module):
         out = self.fc2(out)
         out = self.relu(out)
         out = self.fc3(out)
-        out = self.relu(out)
+        out = self.tanh(out)
         out = self.softmax(out) #to make the out sum to 1 
         return out
 

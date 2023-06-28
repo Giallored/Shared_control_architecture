@@ -18,14 +18,13 @@ def prBlack(prt): print("\033[98m {}\033[00m" .format(prt))
 def to_numpy(var,use_cuda = False):
     return var.cpu().data.numpy() if use_cuda else var.data.numpy()
 
-def to_tensor(ndarray, use_cuda = False,volatile=False, requires_grad=False):
+def to_tensor(array, use_cuda = False,volatile=False, requires_grad=False):
     dtype = torch.cuda.FloatTensor if use_cuda else torch.FloatTensor
-    
-    #print('before ndarray is dtype:',ndarray.dtype)
+        #print('before ndarray is dtype:',ndarray.dtype)
     #ndarray=ndarray.astype('float64')
     #print('after ndarray is dtype:',ndarray.dtype)
     return Variable(
-        torch.from_numpy(ndarray), volatile=volatile, requires_grad=requires_grad
+        torch.from_numpy(array), volatile=volatile, requires_grad=requires_grad
     ).type(dtype)
 
 def soft_update(target, source, tau):

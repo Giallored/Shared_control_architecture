@@ -9,6 +9,7 @@ from RL_agent.model import (Actor, Critic)
 from RL_agent.memory import SequentialMemory
 from RL_agent.random_process import OrnsteinUhlenbeckProcess
 from RL_agent.utils import *
+from copy import deepcopy
 
 # from ipdb import set_trace as debug
 
@@ -69,19 +70,19 @@ class DDPG(object):
 
 
     def reset(self,state):
-        self.state=deque([state],maxlen=1)
+        self.state=deque([state]*self.n_frame,maxlen=self.n_frame)
         self.s_t=state
         self.a_t=np.array([1.0,0.0,0.0])
         self.episode_value_loss=0.
         self.episode_policy_loss=0.
 
     def update_policy(self):
+        print('UPDATE')
         # Sample batch
         s_batch,a_batch,r_batch,next_s_batch,t_batch = self.memory.sample_and_split(self.batch_size)
-        
-
         # Prepare for the target q batch
         torch.no_grad()
+
         next_s_tsr = to_tensor(next_s_batch,use_cuda=self.use_cuda)#, volatile=True)
 
         with torch.no_grad():
@@ -97,7 +98,10 @@ class DDPG(object):
         # Critic update
         self.critic.zero_grad()
         a_tsr = to_tensor(a_batch,use_cuda=self.use_cuda)
-        s_tsr = to_tensor(s_batch,use_cuda=self.use_cuda)
+        #s_tsr = to_tensor(s_batch,use_cuda=self.use_cuda)
+        s_tsr = to_tensor(np.array(s_batch),use_cuda=self.use_cuda).reshape(self.batch_size,-1)
+
+
         q_batch = self.critic([s_tsr,a_tsr])
         
         value_loss = criterion(q_batch, target_q_batch)
@@ -106,7 +110,9 @@ class DDPG(object):
 
         # Actor update
         self.actor.zero_grad()
-        s_tsr = to_tensor(s_batch,use_cuda=self.use_cuda)
+        #s_tsr = to_tensor(s_batch,use_cuda=self.use_cuda)
+        s_tsr = to_tensor(np.array(s_batch),use_cuda=self.use_cuda).reshape(self.batch_size,-1)
+
         actor_output = self.actor(s_tsr)
         policy_loss = -self.critic([s_tsr,actor_output])
 
@@ -144,7 +150,7 @@ class DDPG(object):
 
     def observe(self, r_t, s_t1, done):
         if self.is_training:
-            self.memory.append(self.state, self.a_t, r_t, done) #append sample in memory
+            self.memory.append(np.array(self.state), self.a_t, r_t, done) #append sample in memory
             self.state.append(s_t1)
             #self.memory.append(self.s_t, self.a_t, r_t, done) #append sample in memory
             #self.s_t = s_t1 #update curr state
@@ -158,10 +164,13 @@ class DDPG(object):
 
     def select_action(self, s_t):
         #get the action from the actor
-        s_tsr = to_tensor(np.array([s_t]),use_cuda=self.use_cuda)
-
+        #s_tsr = to_tensor(np.array([s_t]),use_cuda=self.use_cuda)
+        state=deepcopy(self.state)
+        state.append(s_t)
+        s_tsr = to_tensor(np.array(state),use_cuda=self.use_cuda).reshape(-1)
         a_tsr = self.actor(s_tsr)
-        action = to_numpy(a_tsr,self.use_cuda).squeeze(0)
+        action = to_numpy(a_tsr,self.use_cuda)#.squeeze(0)
+        print(f'------\n Alpha_before: {action}\n')
         if self.is_training:
             #insert some noise
             noise= np.random.dirichlet(np.ones(3),size=1)[0]
@@ -175,6 +184,7 @@ class DDPG(object):
 
     def load_weights(self, output_dir):
         if output_dir is None: return
+        print('LOAD MODEL: ',output_dir)
 
         self.actor.load_state_dict(
             torch.load('{}/actor.pkl'.format(output_dir))

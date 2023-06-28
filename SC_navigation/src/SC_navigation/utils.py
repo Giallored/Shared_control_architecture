@@ -302,11 +302,11 @@ class Contact():
     
     def check_contact(self):
         if self.state==[]:
-            return False,None,None
+            return None,None
         else:
             obj_1 = self.clean_name(self.state[0].collision1_name)
             obj_2 = self.clean_name(self.state[0].collision2_name)
-            return True,obj_1,obj_2
+            return obj_1,obj_2
 
     def clean_name(self,name):
         final_name=''

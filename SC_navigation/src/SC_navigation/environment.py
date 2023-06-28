@@ -33,10 +33,12 @@ class Environment():
         self.laserScanner = LaserScanner()
         self.robot = robot
         self.is_coll=False
+        self.formation_r =6.0
+
 
 
         #reward stuff
-        self.delta_coll = delta_coll
+        self.delta_coll= delta_coll
         self.delta_goal = delta_goal
         self.stacked_steps = 0
         self.stacked_th = 5
@@ -61,7 +63,7 @@ class Environment():
 
         #get the n_state as: n_ranges + 2 (usr_cmd)
         self.n_observations = self.cur_observation.shape[0]
-        if self.verbosity: self.env.print_obj_dict()
+        #if self.verbosity: self.print_obj_dict()
 
         # read the model state to get the tiango and obstacle pose
         self.obj_dict = get_sim_info()
@@ -76,9 +78,11 @@ class Environment():
         self.goal_list=[]
         for id in objects:
             if not id[0:4] == 'wall':
-                self.obs_ids.append(id)
-                if id[0:4]=='goal':
+                if self.is_goal(id):
                     self.goal_list.append(id)
+                else:
+                    self.obs_ids.append(id)
+        #print(self.goal_list)
         self.choose_goal()
 
     def print_obj_dict(self):
@@ -95,7 +99,7 @@ class Environment():
         print('continue...')
         self.step=0
         self.is_coll=False
-        self.choose_goal()
+        #self.choose_goal()
         self.update()
     
     def pause(self):
@@ -115,6 +119,7 @@ class Environment():
         self.ls_ranges,self.obstacle_pos = self.laserScanner.get_obs_points()
         self.cur_observation =self.get_observation()
         self.set_goal_dist()
+        self.safety_check()
 
     def make_step(self):
         #observation = self.get_observation()
@@ -135,29 +140,26 @@ class Environment():
         else:
             return False
         
+    def safety_check(self):
+        self.is_safe=True
+        for id in self.obs_ids:
+            pos_i = self.obj_dict[id].position
+            dist_i = np.linalg.norm(np.subtract(pos_i,self.robot.mb_position))
+            if dist_i<self.delta_coll:
+                theta_w = np.arctan2(pos_i[1]-self.robot.mb_position[1],pos_i[0]-self.robot.mb_position[0])
+                theta_r = theta_w - self.robot.mb_orientation[2]
+                if abs(theta_r)<np.pi/4:
+                    self.is_safe=False
+                    #print(f'theta: {theta_r/np.pi}*pi',)
+
     def callback_collision(self,data):
         contact=Contact(data)
-        flag,obj_1,obj_2=contact.check_contact()
-        if flag and self.is_coll==False:
+        obj_1,obj_2=contact.check_contact()
+        if not(obj_1==None or self.is_goal(obj_1)) and self.is_coll==False:
             self.is_coll=True
-            print(f'---\nCollision: {obj_1} - {obj_2}')
+            print(f'\nCollision: {obj_1} - {obj_2}')
   
 
-    #def coll_check(self,stamp=True):
-    #    r_pos_2d = self.robot.mb_position[0:2]
-    #    min_dist=99999
-    #    obj_cls=''
-    #    for obj_id in self.obs_ids:
-    #        pos_2d = self.obj_dict[obj_id].position[0:2]
-    #        dist_i=np.linalg.norm(np.subtract(pos_2d,r_pos_2d))
-    #        if dist_i<=self.robot.clear:
-    #            if stamp:print(f'Collision with {obj_id}')
-    #            return True,None
-    #        if dist_i<min_dist:
-    #            min_dist=dist_i
-    #            obj_cls=obj_id
-    #    return False,min_dist
-#
     def stuck_check(self,stamp=True):
         if self.robot.mb_position == self.robot.prev_mb_position:
             self.stacked_steps += 1
@@ -198,7 +200,12 @@ class Environment():
             
 
         # arbitration oriented
-        r_alpha = self.cur_act[1]#self.R_alpha*np.linalg.norm(np.subtract(self.prev_act,self.cur_act))
+        
+        if self.is_safe:
+            r_alpha = -self.cur_act[1]*self.R_alpha      #if safe, must go straigth to the goal
+        else:
+            r_alpha = self.R_alpha*self.cur_act[1]      #if close to the obstacles, must avoid
+        #print('is safe? ',self.safety_check(), '==> r_alpha = ',r_alpha)
 
         # command oriented 
         r_cmd = self.R_cmd*np.linalg.norm(np.subtract(self.cur_cmd,self.cur_usr_cmd))
@@ -211,14 +218,17 @@ class Environment():
         else:
             r_end=0
 
+        #customed rewards
+        
+
         self.cur_rewards = [r_safety,r_alpha,r_goal,r_cmd,r_end]
         reward = sum(self.cur_rewards)
         if self.verbosity:
-            print('r_safety: ',r_safety)
-            print('r_alpha: ',r_alpha)
-            print('r_goal: ',r_goal)
-            print('r_cmd: ',r_cmd)
-            print('r_end: ',r_end)
+            print(' - r_safety: ',r_safety)
+            print(f' - r_alpha (safe = {self.is_safe}): {r_alpha}')
+            print(' - r_goal: ',r_goal)
+            print(' - r_cmd: ',r_cmd)
+            print(' - r_end: ',r_end)
             print('Tot rewards:',reward)
         return reward
 
@@ -229,23 +239,32 @@ class Environment():
         self.goal_id = random.sample(self.goal_list,1)[0]
         
         #self.goal_id = '20x100cm_cylinder'
-        self.goal_pos = self.obj_dict[self.goal_id].position
+        #self.goal_pos = self.obj_dict[self.goal_id].position
 
 
     def change_obj_pose(self):
         print('CHANGE OBJ POSITION')
-        radius =6.0
-        #n = 10
-        #obj_list = random.sample(self.obs_ids, n)
-        for obj_id in self.obs_ids:
+        l = self.obs_ids + ['goal']
+        n = len(l)
+        if self.step%100==0:
+            self.formation_r-=0.5
+
+        ax = np.linspace(-self.formation_r,self.formation_r,int(2*self.formation_r)+1)
+        grid = [[x,y] for x in ax for y in ax]
+        if self.formation_r%1==0.0: grid.remove([0.0,0.0])
+        new_poses = random.sample(grid, n)
+        for i in range(n):
+            obj_id =l[i]
             state_msg = ModelState()
-            ro_i = random.random()*radius + 2.0
-            theta_i = random.random()*(2*np.pi)
-            if obj_id[0:4]=='goal': h= 0.01 
+            new_pos = new_poses[i]
+            if self.is_goal(obj_id): 
+                h= 0.01
+                self.goal_pos = new_pos
             else: h=0.3
+
             state_msg.model_name = obj_id
-            state_msg.pose.position.x = ro_i*np.cos(theta_i)
-            state_msg.pose.position.y = ro_i*np.sin(theta_i)
+            state_msg.pose.position.x = new_pos[0]
+            state_msg.pose.position.y = new_pos[1]
             state_msg.pose.position.z = h
             state_msg.pose.orientation.x = 0
             state_msg.pose.orientation.y = 0
@@ -257,6 +276,16 @@ class Environment():
                 resp = set_state( state_msg )
             except:
                 print("Service call failed: %s")
+        
+    
+    def is_goal(self,id):
+        try:
+            if id[0:4]=='goal':
+                return True
+            else:
+                return False
+        except:
+            return False
 
 
 

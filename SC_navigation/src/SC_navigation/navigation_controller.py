@@ -27,7 +27,9 @@ class Controller():
         self.env_name = rospy.get_param('/controller/env')   
         self.rate=rospy.Rate(rate) # 10hz        
         self.verbose=verbose
-        self.load_model = rospy.get_param('/controller/model')
+        self.output_folder = rospy.get_param('/training/output')
+        self.plot_folder = rospy.get_param('/training/plot_folder')
+        self.model2load = rospy.get_param('/controller/model')
         self.n_agents=3
         self.n_acts = 2
 
@@ -57,10 +59,11 @@ class Controller():
                                max_steps=self.hyperParam.max_episode_length,
                                robot = self.tiago)
         self.n_state = self.n_agents*self.n_acts+self.env.n_observations
-        print('obs shape!: ',self.env.n_observations)
-        print('state shape !: ',self.n_state)
-        self.agent = DDPG(self.n_state,self.env.n_actions,self.hyperParam)
-        self.agent.reset(self.env.cur_observation)
+        self.n_state_stk = self.n_state*self.hyperParam.n_frame
+        #print('obs shape!: ',self.env.n_observations)
+        #print('state stk shape !: ',type(self.n_state_stk[0]),type(self.n_state_stk[1]))
+        self.agent = DDPG(self.n_state_stk,self.env.n_actions,self.hyperParam)
+        
         self.pub=rospy.Publisher('mobile_base_controller/cmd_vel', Twist, queue_size=1)
         self.pub_goal=rospy.Publisher('goal',String,queue_size=1)
 
@@ -71,11 +74,15 @@ class Controller():
 
 
     def main(self):
+        self.model_dir = self.get_folder(self.output_folder)
+        self.plot_dir = self.get_folder(self.plot_folder)
+        if not self.model2load =="":
+            self.agent.load_weights(self.model_dir)
 
         print('Controller node is ready!')
         print(' - Mode: ',self.mode)
-        self.get_folder()
-        print(' - Directory: ',self.folder_dir)
+        print(' - Model: ', self.model2load)
+        print(' - Directory: ',self.model_dir)
 
         #-------Setup
         self.reset()
@@ -88,7 +95,7 @@ class Controller():
         self.time=self.start_time
 
         if self.mode=='test':
-            self.agent.load_weights(self.folder_dir)
+            #self.agent.load_weights(self.model_dir)
             self.agent.is_training = False
             self.agent.eval() #makes the agents in evaluation mode
             rospy.Subscriber('usr_cmd_vel',Twist,self.callback_SC)
@@ -142,15 +149,13 @@ class Controller():
 
         #get results fom the previous action and let the agent observe
         new_observation,reward,done = self.env.make_step()
+
         
         if self.mode == 'train' and (self.epoch>0 or self.env.step > self.hyperParam.warmup):
             # update policy only if the warmup is finished
             self.agent.update_policy()
 
-            # save and update
-            if self.env.step % int(10) == 0:
-                self.agent.save_model(self.folder_dir)
-
+        
         #update parameters
         self.env.step += 1
         self.episode_reward += reward
@@ -158,30 +163,28 @@ class Controller():
 
 
         if done: # end of episode
+            self.env.pause()
             self.epoch+=1
             mean_reward = self.episode_reward/self.env.step
             mean_val_loss = self.agent.episode_value_loss/self.env.step
             mean_policy_loss = self.agent.episode_policy_loss/self.env.step
+            self.mean_episode_rewards.append(mean_reward)
+            self.mean_episode_losses.append([mean_val_loss,mean_policy_loss])
 
-            print('\n---')
-            print(' - mode: ',self.mode)
-            print(' - goal: ',self.env.goal_id)
-            print(' - steps: ',self.env.step)
-            print(' - epsilon: ',self.agent.epsilon)
-            print(f' - mem. capacity: {self.agent.memory.actions.get_capacity()}%')
-            print(' - episode mean reward: ',mean_reward)
-            print(' - episode mean val. loss: ',mean_val_loss)
-            print(' - episode mean pol. loss: ',mean_policy_loss)
-            print('---\n')
-            self.plot.save_dict()
+            self.report()
+
+            
 
             if self.mode=='train':
+                #save and update
+                #if self.env.step % int(10) == 0:
+                self.agent.save_model(self.model_dir)
                 if self.epoch>=self.max_epochs:     #END of TRAINING
                     self.pub_goal.publish('END')
                     rospy.signal_shutdown('Terminate training')
                 else:
-                    self.mean_episode_rewards.append(mean_reward)
-                    self.mean_episode_losses.append([mean_val_loss,mean_policy_loss])
+                    self.plot.save_dict()
+
                     self.agent.update_hp()
 
                     if self.epoch%5==0: #every n steps you do an evaluation run
@@ -202,9 +205,9 @@ class Controller():
                 while not (will=='y' or will=='n'): 
                     will = str(input('Wanna save? Click "y" for yes or "n" for no:\n -> '))
                 if will == 'y':
-                    self.plot.save_plot()
+                    self.plot.save_dict()
                 self.env.unpause()
-            
+            self.env.unpause()
             self.reset()
             print(f"GOAL:'{self.env.goal_id}' -> {self.env.goal_pos}")
             
@@ -220,7 +223,6 @@ class Controller():
 
         #assemble and observe the last episode data
         state=np.append(cur_cmds,new_observation)
-        print('state shape: ', state.shape)
         #self.agent.observe(reward, new_observation, done)
         self.agent.observe(reward, state, done)
 
@@ -239,8 +241,8 @@ class Controller():
             #alpha = self.agent.select_action(self.observation)
             tag=self.mode
         print(f"STEP: {self.env.step} - Alpha = {[round(x,3) for x in alpha]} ({tag}) - dt = {dt}", end="\r", flush=True)
-        #alpha=[1.,0.,0.]
-        #print(f"STEP: {self.env.step} - USER = {[round(x,3) for x in usr_cmd]} ({tag}) - dt = {dt}")
+        
+        
 
         # blend commands and send the msg to the robot
         cmd=np.dot(alpha,[usr_cmd,ca_cmd,ts_cmd])
@@ -259,27 +261,49 @@ class Controller():
         if self.verbose:
             self.display_commands(alpha,usr_cmd,ca_cmd,ts_cmd,cmd)
         
+        #print('---------------------')
+        #print(' - alpha: ',alpha)
+        #print(' - cmd: ',cmd)
+        
         self.rate.sleep()
 
 
+    def report(self):
+            print('\n---')
+            print(' - mode: ',self.mode)
+            #print(' - goal: ',self.env.goal_id)
+            print(' - steps: ',self.env.step)
+            if self.mode == 'train':
+                print(' - epsilon: ',self.agent.epsilon)
+                print(f' - mem. capacity: {self.agent.memory.actions.get_capacity()}%')
+                print(' - mean episode reward: ',self.mean_episode_rewards[-1])
+                print(' - mean episode val. loss: ',self.mean_episode_losses[-1][0])
+                print(' - mean episode pol. loss: ',self.mean_episode_losses[-1][1])
+            print('---\n')
 
 
-    def get_folder(self):
-        parent_dir = os.path.join(rospy.get_param('/training/parent_dir'),rospy.get_param('/training/output'))
+
+
+
+
+    def get_folder(self,name):
+        parent_dir = os.path.join(rospy.get_param('/training/parent_dir'),name)
 
         if self.mode =='train':
-            if not self.load_model == "":
-                self.folder_dir = os.path.join(parent_dir,self.load_model)
+            if not self.model2load == "":
+                return os.path.join(parent_dir,self.model2load)
             else:
-                self.folder_dir = get_output_folder(parent_dir,self.env_name)
+                return  get_output_folder(parent_dir,self.env_name)
+            
         elif self.mode =='test':
-            if self.load_model == "":
-                self.load_model = input('What model to load? (check "weights" folder):\n -> ')
-            self.folder_dir = os.path.join(parent_dir,self.load_model)
+            if self.model2load == "":
+                self.model2load = input('What model to load? (check "weights" folder):\n -> ')
+            return os.path.join(parent_dir,self.model2load)
+        
         elif self.mode =='direct':
-            self.folder_dir = get_output_folder(parent_dir,'direct')
+            return get_output_folder(parent_dir,'direct')
         else:
-            self.folder_dir = None
+            return None
         
 
     def display_commands(self,alpha,usr_cmd,ca_cmd,ts_cmd,cmd):
@@ -297,16 +321,17 @@ class Controller():
     def reset(self):
         print('RESET')
         self.env.reset()
-        self.agent.reset(self.env.cur_observation)
+        state=np.append([0.0]*6,self.env.cur_observation)
+        self.agent.reset(state)
         self.ts_controller.reset()
         self.pub_goal.publish(String(self.env.goal_id))
         self.episode_reward = 0.
-        if not self.folder_dir==None:
+        if not self.plot_dir==None:
             self.plot = Plot(
                 goal=self.env.goal_id,
                 env = self.env.name,
-                parent_dir=self.folder_dir,
-                name='epoch_'+str(self.epoch),
+                parent_dir=self.plot_dir,
+                name=self.mode+'epoch_'+str(self.env.step),
                 description='')
             self.ca_controller.dir = self.plot.dir
 
