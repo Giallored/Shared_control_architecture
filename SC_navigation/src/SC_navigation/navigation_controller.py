@@ -152,6 +152,7 @@ class Controller():
 
         
         if self.mode == 'train' and (self.epoch>0 or self.env.step > self.hyperParam.warmup):
+            #print('\n TRAIN')
             # update policy only if the warmup is finished
             self.agent.update_policy()
 
@@ -173,9 +174,8 @@ class Controller():
 
             self.report()
 
-            
-
             if self.mode=='train':
+               
                 #save and update
                 #if self.env.step % int(10) == 0:
                 self.agent.save_model(self.model_dir)
@@ -227,6 +227,7 @@ class Controller():
         self.agent.observe(reward, state, done)
 
 
+
         #update time
         t=rospy.get_time()-self.start_time
         dt = round(t - self.time,3)
@@ -234,15 +235,17 @@ class Controller():
 
         # get alpha from the DDPG    ==> as compute action
         if self.epoch==0 and self.mode == 'train' and self.env.step <= self.hyperParam.warmup:
-            alpha = self.agent.random_action()
+            alpha = self.agent.select_action(state)
             tag='warm'
         else:
+            #print('\n ACT')
             alpha = self.agent.select_action(state)
             #alpha = self.agent.select_action(self.observation)
             tag=self.mode
-        print(f"STEP: {self.env.step} - Alpha = {[round(x,3) for x in alpha]} ({tag}) - dt = {dt}", end="\r", flush=True)
-        
-        
+
+        dDelta =np.sign(self.agent.dist_d-self.agent.dist_avg)
+        #print(f"STEP: {self.env.step} - Alpha = {[round(x,3) for x in alpha]} ({tag}) - dt = {dt} ", end="\r", flush=True)
+        print(f"STEP: {self.env.step} - sigma = {round(self.agent.sigma_w,3)} - var = {round(self.agent.variance,3)} - dDelta = {dDelta} - Delta_th = {round(self.agent.dist_d,4)} --> Alpha = {[round(x,3) for x in alpha]}")
 
         # blend commands and send the msg to the robot
         cmd=np.dot(alpha,[usr_cmd,ca_cmd,ts_cmd])
@@ -257,6 +260,7 @@ class Controller():
         self.ts_controller.store_action(self.time,cmd)
         self.env.update_act(alpha,usr_cmd,cmd)
         self.plot.store(self.time,usr_cmd,ca_cmd,ts_cmd,alpha,cmd)
+        self.plot.obs_poses[self.env.step]=self.env.obstacle_pos
 
         if self.verbose:
             self.display_commands(alpha,usr_cmd,ca_cmd,ts_cmd,cmd)
@@ -331,7 +335,7 @@ class Controller():
                 goal=self.env.goal_id,
                 env = self.env.name,
                 parent_dir=self.plot_dir,
-                name=self.mode+'epoch_'+str(self.env.step),
+                name=self.mode+'epoch_'+str(self.epoch),
                 description='')
             self.ca_controller.dir = self.plot.dir
 

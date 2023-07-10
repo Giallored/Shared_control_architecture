@@ -15,6 +15,7 @@ def fanin_init(size, fanin=None):
 class Actor(nn.Module):
     def __init__(self, nb_states, nb_actions, hidden1=400, hidden2=300, init_w=3e-3):
         super(Actor, self).__init__()
+        self.n_actions = nb_actions
         self.fc1 = nn.Linear(int(nb_states), hidden1)
         self.fc2 = nn.Linear(hidden1, hidden2)
         self.fc3 = nn.Linear(hidden2, nb_actions)
@@ -28,22 +29,24 @@ class Actor(nn.Module):
         self.fc2.weight.data = fanin_init(self.fc2.weight.data.size())
         self.fc3.weight.data.uniform_(-init_w, init_w)
     
-    def forward(self, x):
+    def forward(self, x,w):
         out = self.fc1(x)
         out = self.relu(out)
         out = self.fc2(out)
         out = self.relu(out)
         out = self.fc3(out)
         out = self.tanh(out)
-        #out = self.softmax(out) #to make the out sum to 1 
+        out = self.noisy_softmax(out,w)
         return out
     
-    def noisy_softmax(self,z_batch,w_list:list):
-        for z,w in zip(z_batch,w_list):
-            x = z+torch.ones((3))*w
-            out = self.softmax(x)
-        return out
+    def noisy_softmax(self,z,w):
+        if w==None:
+            return self.softmax(z)
+        else:
+            return self.softmax(z+w)
+        
     
+
     
 
 class Critic(nn.Module):

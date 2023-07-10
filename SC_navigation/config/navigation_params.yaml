@@ -4,9 +4,9 @@ training: #namespace
     hidden2: 300            #hidden num of second fully connect layer 
     rate: 0.001             #learning rate
     prate: 0.0001           #policy net learning rate (only for DDPG)
-    warmup: 40            #time without training but only filling the replay memory
+    warmup: 4            #time without training but only filling the replay memory
     discount: 0.99          
-    bsize: 32               #minibatch size
+    bsize: 2               #minibatch size
     rmsize: 5000 #6000000         #memory size
     window_length: 1         
     tau: 0.001              #moving average for target network
@@ -14,9 +14,9 @@ training: #namespace
     ou_sigma: 1.2           #noise sigma
     ou_mu: 0                #noise mu
     validate_episodes: 20   #how many episode to perform during validate experiment
-    max_episode_length: 500
+    max_episode_length: 10
     validate_steps: 2000    #how many steps to perform a validate experiment
-    output: 'output'        #where to save the stuff
+    output: 'weights'        #where to save the stuff
     plot_folder: 'plots'
     parent_dir: '/home/adriano/Desktop/thesis_ws/src/Shared_control_architecture'
     debug: 'debug'

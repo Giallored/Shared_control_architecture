@@ -202,6 +202,7 @@ class Plot():
         self.ts_cmd=[[0,0]]
         self.alpha=[[1.0,0.0,0.0]]
         self.cmd=[[0.0,0.0]]
+        self.obs_poses={}
     
     def store(self,t,usr_cmd,ca_cmd,ts_cmd,alpha,cmd):
         self.timesteps=np.append(self.timesteps,t)
@@ -272,11 +273,13 @@ class Plot():
             'cmd':self.cmd,
             'alpha':self.alpha,
             'env':self.env,
-            'goal':self.goal
+            'goal':self.goal,
+            'obs':self.obs_poses
         }
         where = os.path.join(self.dir,'plot_dict.pkl')
         with open(where, 'wb') as handle:
             pickle.dump(dict, handle, protocol=pickle.HIGHEST_PROTOCOL)
+        print('Plots saved in: ',where)
 
     def load_dict(self,dict):
         #where = os.path.join(self.dir,dict_name)
