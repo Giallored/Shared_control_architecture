@@ -15,9 +15,9 @@ class LaserScanner():
         self.range_min= 0.05000000074505806
         self.range_max= 25.0
 
-    def trim(self,list):
-        trimmed_list = np.delete(list,range(self.OFFSET),0)
-        trimmed_list = np.delete(trimmed_list, range( len(trimmed_list) -self.OFFSET , len(trimmed_list)),0)
+    def trim(self,list,offset):
+        trimmed_list = np.delete(list,range(offset),0)
+        trimmed_list = np.delete(trimmed_list, range( len(trimmed_list) -offset, len(trimmed_list)),0)
         return trimmed_list
         
     def get_obs_points(self,scan_msg=None):
@@ -25,12 +25,12 @@ class LaserScanner():
             scan_msg=rospy.wait_for_message("scan_raw",LaserScan, timeout=None)
         scan_msg = self.saturate(scan_msg)
         pointcloud = self.lp.projectLaser(scan_msg)
-        ranges=self.trim(scan_msg.ranges)
+        ranges=self.trim(scan_msg.ranges,offset=77)
         points=[]
         for p in read_points(pointcloud, skip_nans=True):
             point=[p[0], p[1]]#, data[2], data[3]]
             points.append(point)
-        points=self.trim(points)
+        points=self.trim(points,offset=20)
         #plt.clf()
         #plt.plot(trimmed_list[:,0],trimmed_list[:,1],'r.')
         #plt.show()

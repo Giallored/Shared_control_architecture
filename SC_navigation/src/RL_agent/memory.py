@@ -9,7 +9,7 @@ import numpy as np
 
 # This is to be understood as a transition: Given `state0`, performing `action`
 # yields `reward` and results in `state1`, which might be `terminal`.
-Experience = namedtuple('Experience', 'state0, action, reward, state1, terminal1')
+Experience = namedtuple('Experience', 'observation0, stateVar0, action, reward, observation1, stateVar1, terminal1')
 
 
 def sample_batch_indexes(low, high, size):
@@ -128,6 +128,7 @@ class SequentialMemory(Memory):
         self.rewards = RingBuffer(limit)
         self.terminals = RingBuffer(limit)
         self.observations = RingBuffer(limit)
+        self.stateVariables = RingBuffer(limit)
 
     def sample(self, batch_size, batch_idxs=None):
         if batch_idxs is None:
@@ -154,7 +155,10 @@ class SequentialMemory(Memory):
             # This code is slightly complicated by the fact that subsequent observations might be
             # from different episodes. We ensure that an experience never spans multiple episodes.
             # This is probably not that important in practice but it seems cleaner.
-            state0 = [self.observations[idx - 1]]
+            #state0 = [self.observations[idx - 1]]
+            observation0 =  [self.observations[idx - 1]]
+            stateVar0 = [self.stateVariables[idx - 1]]
+
             for offset in range(0, self.window_length - 1):
                 current_idx = idx - 2 - offset
                 current_terminal = self.terminals[current_idx - 1] if current_idx - 1 > 0 else False
@@ -162,9 +166,12 @@ class SequentialMemory(Memory):
                     # The previously handled observation was terminal, don't add the current one.
                     # Otherwise we would leak into a different episode.
                     break
-                state0.insert(0, self.observations[current_idx])
-            while len(state0) < self.window_length:
-                state0.insert(0, zeroed_observation(state0[0]))
+                observation0.insert(0, self.observations[current_idx])
+                stateVar0.insert(0, self.stateVariables[current_idx])
+
+            while len(observation0) < self.window_length:
+                observation0.insert(0, zeroed_observation(observation0[0]))
+
             action = self.actions[idx - 1]
             reward = self.rewards[idx - 1]
             terminal1 = self.terminals[idx - 1]
@@ -172,48 +179,61 @@ class SequentialMemory(Memory):
             # Okay, now we need to create the follow-up state. This is state0 shifted on timestep
             # to the right. Again, we need to be careful to not include an observation from the next
             # episode if the last state is terminal.
-            state1 = [np.copy(x) for x in state0[1:]]
-            state1.append(self.observations[idx])
+            observation1 = [np.copy(x) for x in observation0[1:]]
+            observation1.append(self.observations[idx])
+            stateVar1 = [np.copy(x) for x in stateVar0[1:]]
+            stateVar1.append(self.stateVariables[idx])
 
-            assert len(state0) == self.window_length
-            assert len(state1) == len(state0)
-            experiences.append(Experience(state0=state0, action=action, reward=reward,
-                                          state1=state1, terminal1=terminal1))
+            assert len(observation1) == self.window_length
+            assert len(observation1) == len(observation0)
+            experiences.append(Experience(observation0=observation0,stateVar0 = stateVar0, 
+                                          action=action, reward=reward,
+                                          observation1=observation1,stateVar1 = stateVar1,
+                                          terminal1=terminal1))
         assert len(experiences) == batch_size
         return experiences
 
     def sample_and_split(self, batch_size, batch_idxs=None):
         experiences = self.sample(batch_size, batch_idxs)
 
-        state0_batch = []
+        obs0_batch = []
+        sVar0_batch = []
         reward_batch = []
         action_batch = []
         terminal1_batch = []
-        state1_batch = []
+        obs1_batch = []
+        sVar1_batch = []
+
         for e in experiences:
-            state0_batch.append(e.state0)
-            state1_batch.append(e.state1)
+            obs0_batch.append(e.observation0)
+            obs1_batch.append(e.observation1)
+            sVar0_batch.append(e.stateVar0)
+            sVar1_batch.append(e.stateVar1)
             reward_batch.append(e.reward)
             action_batch.append(e.action)
             terminal1_batch.append(0. if e.terminal1 else 1.)
 
         # Prepare and validate parameters.
-        state0_batch = np.array(state0_batch).reshape(batch_size,-1)
-        state1_batch = np.array(state1_batch).reshape(batch_size,-1)
+        obs0_batch = np.array(obs0_batch).squeeze(1)
+        obs1_batch = np.array(obs1_batch).squeeze(1)
+        sVar0_batch = np.array(sVar0_batch).reshape(batch_size,-1)
+        sVar1_batch = np.array(sVar1_batch).reshape(batch_size,-1)
+
         terminal1_batch = np.array(terminal1_batch).reshape(batch_size,-1)
         reward_batch = np.array(reward_batch).reshape(batch_size,-1)
         action_batch = np.array(action_batch).reshape(batch_size,-1)
 
-        return state0_batch, action_batch, reward_batch, state1_batch, terminal1_batch
+        return obs0_batch,sVar0_batch, action_batch, reward_batch, obs1_batch,sVar1_batch, terminal1_batch
 
 
-    def append(self, observation, action, reward, terminal, training=True):
-        super(SequentialMemory, self).append(observation, action, reward, terminal, training=training)
-        
+    def append(self, state, action, reward, terminal, training=True):
+        super(SequentialMemory, self).append(state, action, reward, terminal, training=training)
+        observation,stateVar = state
         # This needs to be understood as follows: in `observation`, take `action`, obtain `reward`
         # and weather the next state is `terminal` or not.
         if training:
             self.observations.append(observation)
+            self.stateVariables.append(stateVar)
             self.actions.append(action)
             self.rewards.append(reward)
             self.terminals.append(terminal)

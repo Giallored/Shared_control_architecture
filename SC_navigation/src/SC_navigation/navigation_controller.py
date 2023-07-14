@@ -58,11 +58,9 @@ class Controller():
                                delta_goal= rospy.get_param('/training/delta_goal'),
                                max_steps=self.hyperParam.max_episode_length,
                                robot = self.tiago)
-        self.n_state = self.n_agents*self.n_acts+self.env.n_observations
-        self.n_state_stk = self.n_state*self.hyperParam.n_frame
-        #print('obs shape!: ',self.env.n_observations)
-        #print('state stk shape !: ',type(self.n_state_stk[0]),type(self.n_state_stk[1]))
-        self.agent = DDPG(self.n_state_stk,self.env.n_actions,self.hyperParam)
+        self.n_state = self.n_agents*self.n_acts#+self.env.n_observations
+        
+        self.agent = DDPG(self.n_state,self.hyperParam.n_frame,self.env.n_actions,self.hyperParam)
         
         self.pub=rospy.Publisher('mobile_base_controller/cmd_vel', Twist, queue_size=1)
         self.pub_goal=rospy.Publisher('goal',String,queue_size=1)
@@ -116,7 +114,7 @@ class Controller():
         self.env.step += 1
 
         usr_cmd = twist_to_cmd(data)
-        ca_cmd = self.ca_controller.get_cmd(self.env.obstacle_pos)
+        ca_cmd = self.ca_controller.get_cmd(self.env.pointCloud)
         ts_cmd = self.ts_controller.get_cmd(self.env.time)
         t=rospy.get_time()-self.start_time
         dt = round(t - self.time,3)
@@ -148,8 +146,8 @@ class Controller():
         self.env.update()
 
         #get results fom the previous action and let the agent observe
-        new_observation,reward,done = self.env.make_step()
-
+        observation,reward,done = self.env.make_step()
+        #print('reward: ',reward)
         
         if self.mode == 'train' and (self.epoch>0 or self.env.step > self.hyperParam.warmup):
             #print('\n TRAIN')
@@ -160,7 +158,6 @@ class Controller():
         #update parameters
         self.env.step += 1
         self.episode_reward += reward
-        self.observation = deepcopy(new_observation)
 
 
         if done: # end of episode
@@ -214,19 +211,17 @@ class Controller():
 
         #NEW EPISODE
         #----------------------------------------------------------
-
+        #print('\n---')
         #get commands
         usr_cmd = twist_to_cmd(data)
-        ca_cmd = self.ca_controller.get_cmd(self.env.obstacle_pos)
+        ca_cmd = self.ca_controller.get_cmd(self.env.pointCloud)
         ts_cmd = self.ts_controller.get_cmd(self.env.time)
-        cur_cmds = usr_cmd+ca_cmd+ts_cmd
+        cur_cmds = np.hstack([usr_cmd,ca_cmd,ts_cmd])
 
         #assemble and observe the last episode data
-        state=np.append(cur_cmds,new_observation)
-        #self.agent.observe(reward, new_observation, done)
-        self.agent.observe(reward, state, done)
-
-
+        
+        state = [observation,cur_cmds]
+        self.agent.observe(reward,state, done)
 
         #update time
         t=rospy.get_time()-self.start_time
@@ -235,32 +230,33 @@ class Controller():
 
         # get alpha from the DDPG    ==> as compute action
         if self.epoch==0 and self.mode == 'train' and self.env.step <= self.hyperParam.warmup:
-            alpha = self.agent.select_action(state)
-            tag='warm'
+            #alpha = self.agent.select_action(state)
+            alpha = self.agent.random_action()
+            print(f'Warmup', end="\r", flush=True)
         else:
             #print('\n ACT')
-            alpha = self.agent.select_action(state)
-            #alpha = self.agent.select_action(self.observation)
+            alpha,a_opt = self.agent.select_action(state)
             tag=self.mode
+            print(f"STEP: {self.env.step} - Alpha = {[round(x,5) for x in alpha]} ({tag}) - A_opt = {[round(x,5) for x in a_opt]} - dt = {dt} ")#, end="\r", flush=True)
 
         dDelta =np.sign(self.agent.dist_d-self.agent.dist_avg)
-        #print(f"STEP: {self.env.step} - Alpha = {[round(x,3) for x in alpha]} ({tag}) - dt = {dt} ", end="\r", flush=True)
-        print(f"STEP: {self.env.step} - sigma = {round(self.agent.sigma_w,3)} - var = {round(self.agent.variance,3)} - dDelta = {dDelta} - Delta_th = {round(self.agent.dist_d,4)} --> Alpha = {[round(x,3) for x in alpha]}")
-
+        #print(f"STEP: {self.env.step} - sigma = {round(self.agent.sigma_w,3)} - var = {round(self.agent.variance,3)} - dDelta = {dDelta} - Delta_th = {round(self.agent.dist_d,4)} --> Alpha = {[round(x,3) for x in alpha]}")
         # blend commands and send the msg to the robot
         cmd=np.dot(alpha,[usr_cmd,ca_cmd,ts_cmd])
         msg = cmd_to_twist(cmd)
         self.pub.publish(msg)
-
+        #print('alpha = ',alpha)
+        
         #save all stuff for the second part of the step
         self.prev_alpha=alpha
-        self.prev_observation=self.observation
+        self.prev_observation=observation
 
         # store actions & plots
         self.ts_controller.store_action(self.time,cmd)
         self.env.update_act(alpha,usr_cmd,cmd)
         self.plot.store(self.time,usr_cmd,ca_cmd,ts_cmd,alpha,cmd)
-        self.plot.obs_poses[self.env.step]=self.env.obstacle_pos
+        self.plot.obs_poses[self.env.step]=self.env.pointCloud
+        self.plot.ranges[self.env.step]=observation
 
         if self.verbose:
             self.display_commands(alpha,usr_cmd,ca_cmd,ts_cmd,cmd)
@@ -278,7 +274,7 @@ class Controller():
             #print(' - goal: ',self.env.goal_id)
             print(' - steps: ',self.env.step)
             if self.mode == 'train':
-                print(' - epsilon: ',self.agent.epsilon)
+                print(' - sigma: ',self.agent.sigma_w)
                 print(f' - mem. capacity: {self.agent.memory.actions.get_capacity()}%')
                 print(' - mean episode reward: ',self.mean_episode_rewards[-1])
                 print(' - mean episode val. loss: ',self.mean_episode_losses[-1][0])
@@ -325,8 +321,7 @@ class Controller():
     def reset(self):
         print('RESET')
         self.env.reset()
-        state=np.append([0.0]*6,self.env.cur_observation)
-        self.agent.reset(state)
+        self.agent.reset(init_state = [self.env.ls_ranges,np.zeros((6))])
         self.ts_controller.reset()
         self.pub_goal.publish(String(self.env.goal_id))
         self.episode_reward = 0.

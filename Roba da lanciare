@@ -6,7 +6,7 @@ $ source /opt/ros/noetic/setup.bash
 
 In thisago_public_ws ==> $ /Desktop/tiago_public_ws
 $ source devel/setup.bash
-roslaunch gazebo_sim tiago_gazebo.launch public_sim:=true end_effector:=pal-gripper world:=static_single_goal
+roslaunch gazebo_sim tiago_gazebo.launch public_sim:=true end_effector:=pal-gripper world:=static_medium
 
 In thesis_ws ==> $ cd /Desktop/thesis_ws
   $ source devel/setup.bash

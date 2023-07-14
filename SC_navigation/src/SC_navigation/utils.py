@@ -203,6 +203,7 @@ class Plot():
         self.alpha=[[1.0,0.0,0.0]]
         self.cmd=[[0.0,0.0]]
         self.obs_poses={}
+        self.ranges = {}
     
     def store(self,t,usr_cmd,ca_cmd,ts_cmd,alpha,cmd):
         self.timesteps=np.append(self.timesteps,t)
@@ -274,7 +275,8 @@ class Plot():
             'alpha':self.alpha,
             'env':self.env,
             'goal':self.goal,
-            'obs':self.obs_poses
+            'obs':self.obs_poses,
+            'ranges':self.ranges,
         }
         where = os.path.join(self.dir,'plot_dict.pkl')
         with open(where, 'wb') as handle:
@@ -319,8 +321,23 @@ class Contact():
             else:
                 final_name+=l
         return final_name 
-        
 
+
+#for processing pointclouds to images
+def pc2img(pc,defi=2,height=300,width=400):
+    pc = np.around(pc,decimals=defi)*10**defi#clean
+    pc[:,1]+=width/2      #translate
+    #print((pc[:,0]>=0) & (pc[:,0]<=300)&(pc[:,1]>=0) & (pc[:,1]<=height))
+    pc = pc[(pc[:,0]>0)  & (pc[:,0]<height)  & (pc[:,1]>0)  & (pc[:,1]<width)] #crop
+    pc=np.array(pc).astype('int') 
+    rows = pc[:,0]
+    cols = pc[:,1]
+    img = np.zeros((height,width))
+    img[rows,cols]=255
+    kernel = np.ones((5,5),np.uint8)#
+    img = cv.dilate(img,kernel,iterations = 1)
+    #img = cv.resize(img, (400,300), interpolation = cv.INTER_AREA)
+    return img
 
 
 

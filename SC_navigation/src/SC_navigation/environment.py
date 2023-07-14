@@ -58,11 +58,9 @@ class Environment():
 
     def setup(self):
         # read a scan and get all points to compute the current state
-        self.ls_ranges,self.obstacle_pos = self.laserScanner.get_obs_points()
-        self.cur_observation =self.get_observation()
+        self.ls_ranges,self.pointCloud = self.laserScanner.get_obs_points()
+        self.n_observations = len(self.ls_ranges)
 
-        #get the n_state as: n_ranges + 2 (usr_cmd)
-        self.n_observations = self.cur_observation.shape[0]
         #if self.verbosity: self.print_obj_dict()
 
         # read the model state to get the tiango and obstacle pose
@@ -116,13 +114,12 @@ class Environment():
         self.goal_pos = self.obj_dict[self.goal_id].position
         self.robot.set_MBpose(self.obj_dict['tiago'])        
         self.time = rospy.get_time()
-        self.ls_ranges,self.obstacle_pos = self.laserScanner.get_obs_points()
-        self.cur_observation =self.get_observation()
+        self.ls_ranges,self.pointCloud = self.laserScanner.get_obs_points()
         self.set_goal_dist()
         self.safety_check()
 
     def make_step(self):
-        #observation = self.get_observation()
+        observation = np.array(self.ls_ranges,dtype='float64')
         reward = self.get_reward()
         is_goal = self.goal_check() 
         is_stuck = self.stuck_check()
@@ -131,7 +128,7 @@ class Environment():
             done=True
         else:
             done = False
-        return self.cur_observation, reward, done 
+        return observation, reward, done 
     
     def goal_check(self,stamp=True):
         if self.goal_dist<=self.delta_goal:
@@ -148,7 +145,7 @@ class Environment():
             if dist_i<self.delta_coll:
                 theta_w = np.arctan2(pos_i[1]-self.robot.mb_position[1],pos_i[0]-self.robot.mb_position[0])
                 theta_r = theta_w - self.robot.mb_orientation[2]
-                if abs(theta_r)<np.pi/4:
+                if abs(theta_r)<np.pi/2:
                     self.is_safe=False
                     #print(f'theta: {theta_r/np.pi}*pi',)
 
@@ -180,7 +177,7 @@ class Environment():
         self.cur_usr_cmd=usr_cmd
         self.cur_cmd = np.array(cmd)
 
-    def get_observation(self):
+    def get_state(self):
         obs = self.cur_usr_cmd+self.ls_ranges
         obs = np.array(obs,dtype='float64')
         return obs
@@ -193,19 +190,12 @@ class Environment():
             r_safety = self.R_col
         else:
             r_safety=0
-            #if min_dist>=self.delta_coll:
-            #    r_safety = 0
-            #else:
-            #    r_safety = (self.delta_coll-min_dist)*self.R_safe
             
-
         # arbitration oriented
-        
         if self.is_safe:
-            r_alpha = -self.cur_act[1]*self.R_alpha      #if safe, must go straigth to the goal
+            r_alpha = self.cur_act[0]*self.R_alpha      #if safe, must go straigth to the goal
         else:
             r_alpha = self.R_alpha*self.cur_act[1]      #if close to the obstacles, must avoid
-        #print('is safe? ',self.safety_check(), '==> r_alpha = ',r_alpha)
 
         # command oriented 
         r_cmd = self.R_cmd*np.linalg.norm(np.subtract(self.cur_cmd,self.cur_usr_cmd))
@@ -217,9 +207,6 @@ class Environment():
             r_end = self.R_end
         else:
             r_end=0
-
-        #customed rewards
-        
 
         self.cur_rewards = [r_safety,r_alpha,r_goal,r_cmd,r_end]
         reward = sum(self.cur_rewards)
