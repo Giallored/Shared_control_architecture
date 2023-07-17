@@ -1,6 +1,6 @@
 
 import numpy as np
-
+import random
 import torch
 import torch.nn as nn
 from torch.optim import Adam
@@ -17,7 +17,7 @@ from torch.nn import Softmax
 
 class DDPG(object):
     def __init__(self, n_states, n_frames, n_actions, args):
-        
+        self.name = 'ddpg'
         if args.seed > 0:
             self.seed(args.seed)
 
@@ -77,11 +77,11 @@ class DDPG(object):
         self.sm_sd = 0.8 # smoothing factors in the exponential moving avg for the SD
         self.sf = 1.1 #scaling factor
 
-        self.sigma_w_target = 0.1 # noise SD for the target 
+        self.sigma_w_target = 0.2 # noise SD for the target 
 
 
         #initializations
-        self.a_t = [1.0,0.0,0.0] # Most recent action
+        self.a_t = 1.0 # Most recent action
         self.episode_value_loss=0.
         self.episode_policy_loss=0.
 
@@ -96,11 +96,10 @@ class DDPG(object):
         
 
 
-    def reset(self,init_state):
-        init_obs,init_cmd = init_state
+    def reset(self,init_obs,init_cmd,init_act):
         self.observations=deque([init_obs]*self.n_frames,maxlen=self.n_frames)
-        self.cmds = init_cmd
-        self.a_t=np.array([1.0,0.0,0.0])
+        self.sVars = init_cmd
+        self.a_t=np.array(init_act)
         self.episode_value_loss=0.
         self.episode_policy_loss=0.
 
@@ -108,24 +107,25 @@ class DDPG(object):
         self.train_iter+=1
         # Sample batch
         obs_batch,svar_batch,a_batch,r_batch,next_obs_batch,next_svar_batch,t_batch = self.memory.sample_and_split(self.batch_size)
-       
+
         obs_tsr = to_tensor(obs_batch,use_cuda=self.use_cuda).reshape(self.batch_size,self.n_frames,-1)
-        svar_tsr = to_tensor(svar_batch,use_cuda=self.use_cuda).reshape(self.batch_size,1,-1)
+        svar_tsr = to_tensor(svar_batch,use_cuda=self.use_cuda).reshape(self.batch_size,-1)
         s_tsr =[obs_tsr,svar_tsr]
 
         next_obs_tsr = to_tensor(next_obs_batch,use_cuda=self.use_cuda).reshape(self.batch_size,self.n_frames,-1)
-        next_svar_tsr = to_tensor(next_svar_batch,use_cuda=self.use_cuda).reshape(self.batch_size,1,-1)
+        next_svar_tsr = to_tensor(next_svar_batch,use_cuda=self.use_cuda).reshape(self.batch_size,-1)
         next_s_tsr = [next_obs_tsr, next_svar_tsr]
 
-        a_tsr = to_tensor(a_batch,use_cuda=self.use_cuda).reshape(self.batch_size,1,-1)
-        r_tsr = to_tensor(r_batch,use_cuda=self.use_cuda)
-        t_tsr = to_tensor(t_batch.astype(np.float),use_cuda=self.use_cuda)
+        a_tsr = to_tensor(a_batch,use_cuda=self.use_cuda).reshape(self.batch_size,-1)
+        r_tsr = to_tensor(r_batch,use_cuda=self.use_cuda).squeeze(1)
+        t_tsr = to_tensor(t_batch.astype(np.float),use_cuda=self.use_cuda).squeeze(1)
 
         with torch.no_grad():
             # compute target actions
-            _,z_target = self.actor_target(next_s_tsr) # target action
-            epsilon = torch.normal(mean=0, std=0.7,size= z_target.shape).clamp(-self.noise_clip, self.noise_clip)#1))   #noise
-            target_a_tsr = self.softmax(z_target+epsilon).unsqueeze(1)
+            a_opt = self.actor_target(next_s_tsr) # target action
+            epsilon = torch.normal(mean=0, std=0.7,size= a_opt.shape).clamp(0, 1)   #noise
+            target_a_tsr = (a_opt+epsilon).clamp(0,1).reshape(self.batch_size,-1)
+            
             #print('target_a: ',target_a_tsr.squeeze())
             #print('original: ',self.actor_target(next_s_tsr, None).squeeze())
         
@@ -136,12 +136,12 @@ class DDPG(object):
 
         # Value update
         y1,y2 = self.critic([s_tsr,a_tsr])  #current value stimate
-        print('--')
+
         #print(f'y1 = {to_numpy(y1,self.use_cuda).squeeze(0)},y2 = {to_numpy(y2,self.use_cuda).squeeze(0)}')
         value_loss = self.loss(y1,target_y) + self.loss(y2,target_y) #loss
-        value_loss.backward()
-        
+
         self.critic.zero_grad()
+        value_loss.backward()
         self.critic_optim.step()
         self.episode_value_loss+=value_loss.item()
         #print('value loss: ',value_loss.item())
@@ -151,8 +151,8 @@ class DDPG(object):
         # Delayed policy updates
         if self.train_iter % self.policy_freq == 0:
 
-            a_opt,_ = self.actor(s_tsr)
-            a_opt=a_opt.reshape(self.batch_size,1,-1)
+            a_opt = self.actor(s_tsr)
+            a_opt=a_opt.reshape(self.batch_size,-1)
             q_opt,_=self.critic([s_tsr,a_opt])
             #print(f'q_opt = {to_numpy(q_opt,self.use_cuda).squeeze(0)}')
             policy_loss = -q_opt.mean()   #loss
@@ -188,19 +188,20 @@ class DDPG(object):
         self.critic_target.cuda()
 
     def observe(self, r_t, s_t1, done):
-        obs_t1,cmd_t1=s_t1
+        obs_t1,sVar_t1=s_t1
         if self.is_training:
-            self.memory.append(state=[np.array(self.observations),self.cmds],
+            self.memory.append(state=[np.array(self.observations),self.sVars],
                                action = self.a_t, reward = r_t, terminal =done) #append sample in memory
             self.observations.append(obs_t1)
-            self.cmds = cmd_t1
+            self.sVars = sVar_t1
             #self.memory.append(self.s_t, self.a_t, r_t, done) #append sample in memory
             #self.s_t = s_t1 #update curr state
 
     def random_action(self):
         # using the Dirichlet distrution to get the action to sum to 1
         #action = np.random.uniform(-1.,1.,self.nb_actions)
-        action = np.random.dirichlet(np.ones(3),size=1)[0]
+        #action = np.random.dirichlet(np.ones(3),size=1)[0]
+        action = random.random()
         self.a_t = action
         return action
 
@@ -211,20 +212,19 @@ class DDPG(object):
         observation.append(obs_t)
         
         obs_tsr = to_tensor(np.array(observation),use_cuda=self.use_cuda).reshape(1,self.n_frames,-1)
-        cmd_tsr = to_tensor(cmd_t,use_cuda=self.use_cuda).reshape(1,1,-1)
+        cmd_tsr = to_tensor(cmd_t,use_cuda=self.use_cuda).reshape(1,-1)
         s_tsr = [obs_tsr,cmd_tsr]
         #get the optimal action (no noise)
-        a_opt,z_opt = self.actor(s_tsr)
+        a_opt = self.actor(s_tsr)
         #print('\n---')
         #print('a_opt: ',a_opt)
-        #print('sigma: ',self.sigma_w)
         
         if self.is_training:
-            epsilon = torch.normal(mean=0, std=self.sigma_w,size=z_opt.shape)#1))  #Gaussian Noise
-            a_noise = self.softmax(z_opt+epsilon)
-            self.update_noise(a_opt.detach(),a_noise.detach())
+            epsilon = torch.normal(mean=0, std=self.sigma_w,size=a_opt.shape).clamp(-self.noise_clip,self.noise_clip)#1))  #Gaussian Noise
+            self.sigma_w*=self.sigma_decay
+            a_noise = (a_opt+epsilon).clamp(0,1)
+            #self.update_noise(a_opt,action)
             action = to_numpy(a_noise,self.use_cuda).squeeze(0)
-            
         else:
             action = to_numpy(a_opt,self.use_cuda).squeeze(0)
         self.a_t = action

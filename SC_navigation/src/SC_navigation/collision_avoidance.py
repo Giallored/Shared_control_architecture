@@ -16,8 +16,8 @@ import pickle
 class Collision_avoider():
     def __init__(self, delta=0.7,K_lin=0.1,K_ang=0.1,dir=None):
         self.th_dist=delta   #distance threshold
-        self.K_lin=K_lin
-        self.K_ang=K_ang
+        self.K_lin= K_lin
+        self.K_ang= K_ang
         self.k_r = 1.0
         self.gamma = 2
         self.frames={}
@@ -74,10 +74,11 @@ class Collision_avoider():
     def get_cmd(self,poin_cloud):
 
         dist_list = [np.linalg.norm(p) for p in poin_cloud]
-        sorted_cloud =poin_cloud[np.argsort(dist_list)]
+        indices = np.argsort(dist_list)
+        sorted_cloud =poin_cloud[indices]
         try:
-            min_dist = np.linalg.norm(sorted_cloud[0])
             X_obs = self.get_proj_point(sorted_cloud)
+            #X_obs = sorted_cloud[0]
         except:
             return [0.0,0.0]
         
@@ -85,7 +86,7 @@ class Collision_avoider():
         if X_obs[1]>0: sign=1      #obstalce in thr Rx ==> CCW
         else: sign=-1                #obstalce in thr Lx ==> CW
         dU_r=self.d_Ur(X_obs,[0,0])   
-        F_v = np.array([dU_r[1],-dU_r[0]]) * sign
+        F_v = np.array([-dU_r[0],dU_r[1]]) #* sign
         dx_d = F_v[0]
         dy_d = F_v[1]
         dtheta_d = np.arctan2(dy_d,dx_d)

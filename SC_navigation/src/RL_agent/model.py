@@ -30,8 +30,7 @@ class Actor(nn.Module):
         self.relu = nn.ReLU()
         self.tanh = nn.Tanh()
         self.batchNorm = nn.BatchNorm1d(self.n_kernels)
-        self.dropout = nn.Dropout(p=self.p_drop)
-        self.softmax = nn.Softmax(dim=-1)
+        
         self.init_weights(init_w)
     
     def init_weights(self, init_w):
@@ -41,19 +40,15 @@ class Actor(nn.Module):
     
     def forward(self,x):
         img,cmd = x
+        bs = img.shape[0]
         out = self.relu(self.conv1(img))
         out = self.batchNorm(out)
         out = self.relu(self.conv2(out))
-        out = self.relu(self.fc1(out))
+        out = self.relu(self.fc1(out)).reshape(bs,-1)
         out = self.relu(self.fc2(torch.cat([out,cmd],-1)))
-        out = self.relu(self.fc3(out))
-        print('out pre: ',out )
-        out = nn.functional.normalize(input=out, dim=-1)
-        print('out post: ',out )
-
-        act = self.softmax(out).squeeze(1)
-
-        return act,out.squeeze(1)
+        out = self.fc3(out)
+        act = torch.sigmoid(out).squeeze(1)
+        return act
     
     def noisy_softmax(self,z,w):
         if w==None:
@@ -104,11 +99,12 @@ class Critic(nn.Module):
     def forward(self, xs):
         x, a = xs
         img,cmd = x
+        bs = img.shape[0]
 
         out1 = self.relu(self.conv11(img))
         out1 = self.batchNorm(out1)
         out1 = self.relu(self.conv12(out1))
-        out1 = self.relu(self.fc11(out1))
+        out1 = self.relu(self.fc11(out1)).reshape(bs,-1)
         out1 = self.relu(self.fc12(torch.cat([out1,cmd,a],-1)))
         out1 = self.fc13(out1)
         out1 = self.layerNorm(out1)
@@ -118,7 +114,7 @@ class Critic(nn.Module):
         out2 = self.relu(self.conv21(img))
         out2 = self.batchNorm(out2)
         out2 = self.relu(self.conv22(out2))
-        out2 = self.relu(self.fc21(out2))
+        out2 = self.relu(self.fc21(out2)).reshape(bs,-1)
         out2 = self.relu(self.fc22(torch.cat([out2,cmd,a],-1)))
         out2 = self.fc23(out2)
         out2 = self.layerNorm(out2)
@@ -126,3 +122,36 @@ class Critic(nn.Module):
         out2 = self.fc24(out2)
 
         return out1.squeeze(1),out2.squeeze(1)
+    
+
+
+class Qnet(nn.Module):             # Q-learning network
+
+    def __init__(self, n_states,n_frames, n_actions,hidden1,hidden2,init_w=3e-3):
+        super(Qnet, self).__init__()
+        self.n_frames = n_frames
+        self.n_actions = n_actions
+        self.n_kernels = 32
+
+
+        # architecture
+        self.conv1 = nn.Conv1d(n_frames,self.n_kernels,kernel_size=5,stride=2)
+        self.conv2 = nn.Conv1d(self.n_kernels,1,kernel_size=3,stride=2) 
+        self.fc1 = nn.Linear(155, hidden1)
+        self.fc2 = nn.Linear(n_states+hidden1, hidden2)
+        self.fc3 = nn.Linear(hidden2, n_actions)        
+        self.relu = nn.ReLU()
+        self.batchNorm = nn.BatchNorm1d(self.n_kernels)
+
+
+
+    def forward(self,x):
+        img,cmd = x
+        bs = cmd.shape[0]
+        out = self.relu(self.conv1(img))
+        out = self.batchNorm(out)
+        out = self.relu(self.conv2(out))
+        out = self.relu(self.fc1(out)).reshape(bs,-1)
+        out = self.relu(self.fc2(torch.cat([out,cmd],-1)))
+        out = self.fc3(out)
+        return out.squeeze(1)

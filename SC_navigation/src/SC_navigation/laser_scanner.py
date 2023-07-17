@@ -23,31 +23,47 @@ class LaserScanner():
     def get_obs_points(self,scan_msg=None):
         if scan_msg==None:
             scan_msg=rospy.wait_for_message("scan_raw",LaserScan, timeout=None)
-        scan_msg = self.saturate(scan_msg)
+        scan_msg,ranges = self.saturate_and_trim(scan_msg,3)
         pointcloud = self.lp.projectLaser(scan_msg)
-        ranges=self.trim(scan_msg.ranges,offset=77)
         points=[]
         for p in read_points(pointcloud, skip_nans=True):
             point=[p[0], p[1]]#, data[2], data[3]]
             points.append(point)
-        points=self.trim(points,offset=20)
+        #points=self.trim(points,offset=20)
+        #ranges=self.trim(ranges,offset=20)
         #plt.clf()
         #plt.plot(trimmed_list[:,0],trimmed_list[:,1],'r.')
         #plt.show()
-        return ranges.tolist(),points
+        return ranges,np.array(points)
     
-    def saturate(self,scan_msg):
-        n=len(scan_msg.ranges)
-        new_ranges = []
-        for i in range(n):
-            r=scan_msg.ranges[i]
-            if r>self.range_max:
-                new_ranges.append(self.range_max)
-            elif r<self.range_min:
-                new_ranges.append(self.range_max)
+    def saturate_and_trim(self,scan_msg,max=25.0):
+        scan_msg.ranges=self.trim(scan_msg.ranges,offset=20)
+        ranges=[]
+        for r in scan_msg.ranges:
+            if r>max:
+                ranges.append(9999)
             else:
-                new_ranges.append(r)
-        scan_msg.ranges=new_ranges
-        return scan_msg
+                ranges.append(r)
+
+            
+        #np.clip(scan_msg.ranges,self.range_min,None)
+        #n=len(scan_msg.ranges)
+        #new_ranges = []
+        #for r in ranges:
+        #    if r>max:
+        #        new_ranges.append(max)
+        #    elif r<self.range_min:
+        #        new_ranges.append(self.range_min)
+        #    else:
+        #        new_ranges.append(r)
+        #
+        #scan_msg.ranges=new_ranges
+        return scan_msg,ranges
+    
+    def normalize(self,range,norm_th=1.5):
+        if range<=norm_th: 
+            return range/norm_th*255
+        else:
+            return 0.0
 
     

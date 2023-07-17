@@ -12,20 +12,28 @@ from SC_navigation.utils import *
 
 class User():
     
-    def __init__(self,rate=5):
+    def __init__(self,discrete = False,rate=5):
         rate = rospy.get_param('/controller/usr_rate') 
         self.tiago=TIAgo()
         self.pub = rospy.Publisher('usr_cmd_vel', Twist, queue_size=1)
         self.goal_id='tiago'
+        self.discrete = discrete
         
         #self.pub = rospy.Publisher('usr_cmd_vel', Float64MultiArray, queue_size=1)
         
         #primitives
+        self.primitive_v = 0.8
+        self.primitive_om = 1.0
         self.stop_cmd = cmd_to_twist([0.0,0.0])
-        self.up_cmd = cmd_to_twist([0.8,0.0])
-        self.down_cmd = cmd_to_twist([-0.5,0.0])
-        self.left_cmd = cmd_to_twist([0.0,-1.0])
-        self.right_cmd = cmd_to_twist([0.0,1.0])
+
+
+        self.max_v = 1.0
+        self.min_v = -0.8
+        self.max_om = 1.0
+        self.min_om = -1.0
+        self.k_l = 1
+        self.k_a = 5        
+        self.max_noise = 0.2
         
 
         #threshold on bearing to turn 
@@ -45,19 +53,14 @@ class User():
             self.rate.sleep()
 
     def get_cmd(self):
-        #goal_rel_pos = self.tiago.get_relative_pos(self.goal_pos)
-        #goal_dist = np.linalg.norm(goal_rel_pos)
-        #theta = np.arctan2(goal_rel_pos[1],goal_rel_pos[0])
-        #theta = clamp_angle(theta)
-        #print('theta: ', theta)
-
         dist,theta = self.get_goal_dist()
         #get the probability to turn
-        if abs(theta)>self.theta_th:
-            p=1.0
+
+        if self.discrete:
+            cmd = self.discrete_act(dist,theta)
         else:
-            p = (abs(theta)/self.theta_th)**2
-        cmd = self.e_greedy_act(dist,theta,p)
+            cmd = self.continue_act(dist,theta)
+
         return cmd
     
 
@@ -69,28 +72,38 @@ class User():
         theta = a_dist-r_theta
         return l_dist,theta
 
-    def e_greedy_act(self,dist,theta,p):
+    def discrete_act(self,dist,theta):
+        if abs(theta)>self.theta_th:
+            p=1.0
+        else:
+            p = (abs(theta)/self.theta_th)**2
         e= random.random()
         if dist<0.01:
             return self.stop_cmd 
         else:
             #get the linear command
             if abs(theta)<=self.theta_th:
-                v = 0.8
+                v = self.self.primitive_v
                 om=0.0
             else:
                 v = 0.0
             #get the angular command
             if e<=p:
-                om = np.sign(theta)*1.0
-                #if theta>0:
-                #    om= 1.0
-                #else:
-                #    om= -1.0
+                om = np.sign(theta)*self.primitive_om
             else:
                 om=0.0
             cmd = cmd_to_twist([v,om])
             return cmd
+        
+    def continue_act(self,dist,theta):
+        noise = np.random.uniform(-self.max_noise,self.max_noise,2)
+        if abs(theta)<=self.theta_th:
+            v = np.clip(self.k_l*dist+noise[0],self.min_v,self.max_v)
+        else:
+            v = 0.0
+        om = np.clip(self.k_a*theta+noise[1],self.min_om,self.max_om)
+        cmd = cmd_to_twist([v,om])
+        return cmd
 
 
 
@@ -110,7 +123,7 @@ class User():
 if __name__ == '__main__':
     try:
         rospy.init_node('User', anonymous=True)
-        node =User()
+        node =User(discrete = False)
         node.main()
     except rospy.ROSInterruptException:
         pass

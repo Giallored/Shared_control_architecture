@@ -16,6 +16,8 @@ class TIAgo():
         self.mb_position=mb_position # wrt RFworld
         self.prev_mb_position=mb_position
         self.mb_orientation=mb_orientation # wrt RFworld
+        self.mb_v = 0.0     # linear vel wrt RFworld
+        self.mb_om = 0.0    # angular vel wrt RFworld
         self.clear = clear
         self.Tf_tiago_w = np.zeros((4,4))
 
@@ -200,7 +202,7 @@ class Plot():
         self.usr_cmd=[[0,0]]
         self.ca_cmd=[[0,0]]
         self.ts_cmd=[[0,0]]
-        self.alpha=[[1.0,0.0,0.0]]
+        self.alpha=[1.0]
         self.cmd=[[0.0,0.0]]
         self.obs_poses={}
         self.ranges = {}
@@ -210,7 +212,7 @@ class Plot():
         self.usr_cmd=np.append(self.usr_cmd,[usr_cmd],axis=0)
         self.ca_cmd=np.append(self.ca_cmd,[ca_cmd],axis=0)
         self.ts_cmd=np.append(self.ts_cmd,[ts_cmd],axis=0)
-        self.alpha=np.append(self.alpha,[alpha],axis=0)
+        #self.alpha=np.append(self.alpha,alpha,axis=0)
         self.cmd=np.append(self.cmd,[cmd],axis=0)
     
     def save_plot(self,show=False):
@@ -248,7 +250,7 @@ class Plot():
         plt.savefig(path)
 
         f_a= plt.plot( self.timesteps,self.alpha)
-        plt.legend(['usr_a','ca_a','ts_a'])
+        #plt.legend(['usr_a','ca_a','ts_a'])
         path = os.path.join(self.dir,'alpha.png')
         plt.savefig(path)
 
