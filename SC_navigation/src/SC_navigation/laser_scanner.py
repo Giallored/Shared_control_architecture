@@ -10,8 +10,12 @@ import matplotlib.pyplot as plt
 class LaserScanner():
     def __init__(self):
         self.lp = lg.LaserProjection()
+        self.scan_msg = rospy.wait_for_message("scan_raw",LaserScan, timeout=None)
         self.OFFSET = 20
         self.figure=plt.figure()
+        self.angle_min= -1.9198600053787231
+        self.angle_max= 1.9198600053787231
+        self.angle_increment= 0.005774015095084906
         self.range_min= 0.05000000074505806
         self.range_max= 25.0
 
@@ -20,50 +24,39 @@ class LaserScanner():
         trimmed_list = np.delete(trimmed_list, range( len(trimmed_list) -offset, len(trimmed_list)),0)
         return trimmed_list
         
-    def get_obs_points(self,scan_msg=None):
-        if scan_msg==None:
-            scan_msg=rospy.wait_for_message("scan_raw",LaserScan, timeout=None)
-        scan_msg,ranges = self.saturate_and_trim(scan_msg,3)
-        pointcloud = self.lp.projectLaser(scan_msg)
+    def get_obs_points(self,max_dist = 3):
+        msg = self.scan_msg
+        #if not len(msg.ranges) == 666:
+        #    msg = self.padding(msg)
+        msg.ranges = self.trim(msg.ranges,offset=20)
+        
+        pointcloud = self.lp.projectLaser(msg)
         points=[]
         for p in read_points(pointcloud, skip_nans=True):
             point=[p[0], p[1]]#, data[2], data[3]]
-            points.append(point)
-        #points=self.trim(points,offset=20)
-        #ranges=self.trim(ranges,offset=20)
-        #plt.clf()
-        #plt.plot(trimmed_list[:,0],trimmed_list[:,1],'r.')
-        #plt.show()
+            if np.linalg.norm(point)<=max_dist:
+                points.append(point)
+
+        ranges = self.preproces(msg.ranges,max_dist)
+
         return ranges,np.array(points)
     
-    def saturate_and_trim(self,scan_msg,max=25.0):
-        scan_msg.ranges=self.trim(scan_msg.ranges,offset=20)
-        ranges=[]
-        for r in scan_msg.ranges:
-            if r>max:
-                ranges.append(9999)
-            else:
-                ranges.append(r)
-
-            
-        #np.clip(scan_msg.ranges,self.range_min,None)
-        #n=len(scan_msg.ranges)
-        #new_ranges = []
-        #for r in ranges:
-        #    if r>max:
-        #        new_ranges.append(max)
-        #    elif r<self.range_min:
-        #        new_ranges.append(self.range_min)
-        #    else:
-        #        new_ranges.append(r)
-        #
-        #scan_msg.ranges=new_ranges
-        return scan_msg,ranges
+    def padding(self,msg):
+        n=len(msg.ranges)
+        if n<666:
+            padding = int((666-n)/2)
+            cunck = [np.inf]*padding
+            msg.ranges = [*cunck , *msg.ranges, *cunck]
+        return msg
     
-    def normalize(self,range,norm_th=1.5):
-        if range<=norm_th: 
-            return range/norm_th*255
-        else:
-            return 0.0
 
+    def preproces(self,ranges,max_dist,max_span=np.pi/3):
+        new_ranges = np.clip(ranges,0,max_dist)
+        new_ranges = np.subtract(np.ones(new_ranges.shape)*max_dist,new_ranges)
+        ranges2trim = max_span//self.angle_increment
+        offset = int((new_ranges.shape[0] - ranges2trim)/2)
+        new_ranges = self.trim(new_ranges,offset=offset)
+        return new_ranges.tolist()
     
+    
+

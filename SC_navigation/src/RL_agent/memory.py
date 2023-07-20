@@ -135,6 +135,7 @@ class SequentialMemory(Memory):
             # Draw random indexes such that we have at least a single entry before each
             # index.
             batch_idxs = sample_batch_indexes(0, self.nb_entries - 1, size=batch_size)
+            
         batch_idxs = np.array(batch_idxs) + 1
         assert np.min(batch_idxs) >= 1
         assert np.max(batch_idxs) < self.nb_entries
@@ -214,8 +215,8 @@ class SequentialMemory(Memory):
             terminal1_batch.append(0. if e.terminal1 else 1.)
 
         # Prepare and validate parameters.
-        obs0_batch = np.array(obs0_batch).squeeze(1)
-        obs1_batch = np.array(obs1_batch).squeeze(1)
+        obs0_batch = np.array(obs0_batch)#.squeeze(1)
+        obs1_batch = np.array(obs1_batch)#.squeeze(1)
         sVar0_batch = np.array(sVar0_batch).reshape(batch_size,-1)
         sVar1_batch = np.array(sVar1_batch).reshape(batch_size,-1)
 
@@ -261,7 +262,7 @@ class EpisodeParameterMemory(Memory):
         if batch_idxs is None:
             batch_idxs = sample_batch_indexes(0, self.nb_entries, size=batch_size)
         assert len(batch_idxs) == batch_size
-
+       
         batch_params = []
         batch_total_rewards = []
         for idx in batch_idxs:

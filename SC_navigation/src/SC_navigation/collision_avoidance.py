@@ -3,7 +3,7 @@
 from geometry_msgs.msg import Twist
 import numpy as np
 import matplotlib.pyplot as plt
-from SC_navigation.utils import compute_cls_obs,clamp_angle
+from SC_navigation.utils import clamp_angle
 import math
 import os
 import pickle
@@ -18,7 +18,7 @@ class Collision_avoider():
         self.th_dist=delta   #distance threshold
         self.K_lin= K_lin
         self.K_ang= K_ang
-        self.k_r = 1.0
+        self.k_r = 5.0
         self.gamma = 2
         self.frames={}
         self.f_i = 0
@@ -71,95 +71,38 @@ class Collision_avoider():
 
 
 
-    def get_cmd(self,poin_cloud):
+    def get_cmd(self,X_obs):
 
-        dist_list = [np.linalg.norm(p) for p in poin_cloud]
-        indices = np.argsort(dist_list)
-        sorted_cloud =poin_cloud[indices]
-        try:
-            X_obs = self.get_proj_point(sorted_cloud)
-            #X_obs = sorted_cloud[0]
-        except:
-            return [0.0,0.0]
+        #dist_list = [np.linalg.norm(p) for p in poin_cloud]
+        #indices = np.argsort(dist_list)
+        #sorted_cloud =poin_cloud[indices]
+        #try:
+        #    #X_obs = self.get_proj_point(sorted_cloud)
+        #    X_obs = sorted_cloud[0]
+        #except:
+        #    return [0.0,0.0]
         
-        
-        if X_obs[1]>0: sign=1      #obstalce in thr Rx ==> CCW
-        else: sign=-1                #obstalce in thr Lx ==> CW
+        theta = clamp_angle(np.arctan2(X_obs[1],X_obs[0]))   
+        sign = -np.sign(theta)
+    
         dU_r=self.d_Ur(X_obs,[0,0])   
-        F_v = np.array([-dU_r[0],dU_r[1]]) #* sign
+        F_v = np.array([dU_r[1],-dU_r[0]]) 
         dx_d = F_v[0]
         dy_d = F_v[1]
         dtheta_d = np.arctan2(dy_d,dx_d)
         dtheta_d = clamp_angle(dtheta_d)
-        
-        v_cmd = -self.K_lin*(dx_d+dy_d)
-        om_cmd = -self.K_ang*(dtheta_d)
+        v_cmd = self.K_lin*(theta/2)**2
+        #print(dx_d*np.cos(theta)+dy_d*np.sin(theta))
+        om_cmd = self.K_ang*(dtheta_d)* sign
         return [v_cmd,om_cmd]
         
-            
-        
-    
-    def get_frame(self,poin_cloud,cluster,X_obs,centroid):
-        self.f_i+=1
-        self.frames[self.f_i]={'point_cloud':poin_cloud,
-                                'cluster':cluster,
-                                'X_obs':X_obs,
-                                'centroid':centroid}
-        where = os.path.join(self.dir,'frames.pkl')
-        with open(where, 'wb') as handle:
-            pickle.dump(dict, handle, protocol=pickle.HIGHEST_PROTOCOL)
-        
-
-
-        
-   
-        
-
-        '''
-        #print('Closest obstacle is: ',cls_obs, 'at ',min_distance)
-        obs_dir = np.subtract(cls_obs,[0,0])
-        repulsive_dir = -obs_dir/np.linalg.norm(obs_dir)
-
-        if min_distance>0:
-            lin_coeff =  self.K_lin/min_distance
-            ang_coeff =  self.K_ang/min_distance
-        else:
-            lin_coeff=ang_coff = 100
-
-        v_rep = -lin_coeff 
-        repulsive_angle=np.arctan2(repulsive_dir[1],repulsive_dir[0])
-        om_rep = ang_coeff*repulsive_angle
-        vel_cmd = [v_rep,om_rep]
-        return vel_cmd
-        '''
-
-        '''
-        X_obs,min_dist =compute_cls_obs(poin_cloud)
-        
-        if min_dist<=self.th_dist:
-            
-            if X_obs[1]>0: sign=1      #obstalce in thr Rx ==> CCW
-            else: sign=-1                #obstalce in thr Lx ==> CW
-            dU_r=self.d_Ur(X_obs,[0,0])   
-
-            F_v = np.array([dU_r[1],-dU_r[0]]) * sign
-            dx_d = F_v[0]
-            dy_d = F_v[1]
-            dtheta_d = np.arctan2(dy_d,dx_d)
-            dtheta_d = dtheta_d%(2*np.pi)
-            if dtheta_d>np.pi:
-                dtheta_d = dtheta_d-2*np.pi
-            if dtheta_d<-np.pi:
-                dtheta_d = dtheta_d+2*np.pi
-
-
-            v_cmd = -self.K_lin*(dx_d+dy_d)
-            om_cmd = -self.K_ang*(dtheta_d)
-            print('dtheta_d: ',dtheta_d )
-
-            return [v_cmd,om_cmd]
-        else:
-            return [0.,0.]
-        '''
-
-    
+      
+    def emergency_cmd(self,X_obs,v):
+        theta = np.arctan2(X_obs[1],X_obs[0])
+        #mod = -v*2 * (np.pi+abs(theta))
+        cmd = [-v,-np.sign(theta)*5]
+        #if cmd[0]>0:
+        #    print(cmd[1],'<-')
+        #else:
+        #    print(cmd[1],'->')
+        return cmd

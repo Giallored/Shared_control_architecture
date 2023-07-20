@@ -3,40 +3,15 @@ from geometry_msgs.msg import Twist
 import numpy as np
 from scipy.spatial.transform import Rotation
 import time
-from gazebo_msgs.msg import ModelStates
 from gazebo_msgs.msg import ContactsState
+from gazebo_msgs.srv import SetModelState
 
+import sys
 import os
 import matplotlib.pyplot as plt
 import pickle
 
 
-class TIAgo():
-    def __init__(self, clear=0.2, mb_position=[0.,0.,0.],mb_orientation=[0.,0.,0.]):
-        self.mb_position=mb_position # wrt RFworld
-        self.prev_mb_position=mb_position
-        self.mb_orientation=mb_orientation # wrt RFworld
-        self.mb_v = 0.0     # linear vel wrt RFworld
-        self.mb_om = 0.0    # angular vel wrt RFworld
-        self.clear = clear
-        self.Tf_tiago_w = np.zeros((4,4))
-
-    def set_MBpose(self,pose):
-        self.mb_prev_position=self.mb_position
-        self.mb_position=pose.position
-        self.mb_orientation=pose.orientation
-        rot = Rotation.from_euler('xyz', self.mb_orientation, degrees=False)
-        self.Tf_tiago_w = Pose2Homo(rot.as_matrix(),self.mb_position)
-        #turn orientation from quat to euler (in rad)
-        #rot = Rotation.from_quat(Vec4_to_list(pose.orientation))
-        #self.Tf_tiago_w = Pose2Homo(rot.as_matrix(),self.mb_position)
-        #self.mb_orientation=rot.as_euler('xyz', degrees=False)
-    
-    def get_relative_pos(self,obj_pos):
-        pos = obj_pos+[1]
-        rel_pos = np.dot(np.linalg.inv(self.Tf_tiago_w),pos)
-        rel_pos=rel_pos[:-1]
-        return rel_pos
 
 def Pose2Homo(rot,trasl):
     p=np.append(trasl,[1])
@@ -87,21 +62,17 @@ def blend_commands(w_list,cmd_list,n=3):
         om+=w_i*om_i
     return v,om
 
-def compute_cls_obs(obs_list):
-        min_distace=math.inf
-        cls_point = [25.0,25.0]
-        cls_id = 0
-        cnt=0
-        for obs in obs_list:
-            distance = np.linalg.norm(obs)
-            if distance<min_distace and distance > 0.0:
-                min_distace=distance
-                cls_point=obs
-                cls_id=cnt
-            cnt+=1
-        return cls_point,min_distace
+def get_cls_obstacle(poin_cloud):
+        dist_list = [np.linalg.norm(p) for p in poin_cloud]
+        indices = np.argsort(dist_list)
+        sorted_cloud =poin_cloud[indices]
+        try :
+            return sorted_cloud[0]
+        except:
+            return np.array([9999,9999])
         
-        
+
+
 def from_cmd_msg(msg):
     cmds = np.array_split(msg.data, len(msg.data)/2)
     usr_cmd=cmds[0]
@@ -116,12 +87,20 @@ def countdown(n):
         time.sleep(1)
     print('GO!')
 
+        
+def send_state_msg(msg):
+    rospy.wait_for_service('/gazebo/set_model_state')
+    try:
+        set_state = rospy.ServiceProxy('/gazebo/set_model_state', SetModelState)
+        resp = set_state(msg)
+    except:
+        print("Service call failed: %s")
 
-
-def get_sim_info():
-    ms_msg = rospy.wait_for_message("/gazebo/model_states",ModelStates, timeout=None)
+def get_sim_info(ms_msg):
     ids = ms_msg.name
+    #poses
     poses = ms_msg.pose
+    vels = ms_msg.twist
     tiago_pos = Vec3_to_list( poses[ids.index('tiago')].position)
     dict = {}
     for id,pose in zip(ids,poses):
@@ -131,8 +110,13 @@ def get_sim_info():
         obj = Object(id,pos_i,theta_i,dist_i)
         dict[id]=obj
 
-    
-    return dict
+    #tiago vels
+    v_abs = Vec3_to_list(vels[ids.index('tiago')].linear)
+    om = vels[ids.index('tiago')].angular.z
+    v = np.linalg.norm(v_abs)
+    return dict,[v,om]
+
+
 
 class Object():
     def __init__(self, id:str, pos,theta, dist:float):
@@ -189,119 +173,115 @@ def get_output_folder(parent_dir, env_name):
 
 
 class Plot():
-    def __init__(self,goal,env,parent_dir,name,description:str=''):
+    def __init__(self,goal,env,parent_dir,name='',type='act'):
         self.name=name
-        self.dir = os.path.join(parent_dir,self.name)
-        os.makedirs(self.dir, exist_ok=True)
-        self.description=description
-        
+        self.type = type
+        if type == 'act':
+            self.dir = os.path.join(parent_dir,self.name)
+            os.makedirs(self.dir, exist_ok=True)
+            #initializations
+            self.timesteps=[]
+            self.usr_cmd=[]
+            self.ca_cmd=[]
+            self.ts_cmd=[]
+            self.alpha=[]
+            self.cmd=[]
+            self.obs_poses={}
+            self.ranges = {}
+        else:
+            self.dir = parent_dir   
+            self.epochs = []
+            self.rewards = []
+            self.mean_loss = []
         self.goal=goal
         self.env=env
-        #initializations
-        self.timesteps=[0.]
-        self.usr_cmd=[[0,0]]
-        self.ca_cmd=[[0,0]]
-        self.ts_cmd=[[0,0]]
-        self.alpha=[1.0]
-        self.cmd=[[0.0,0.0]]
-        self.obs_poses={}
-        self.ranges = {}
-    
-    def store(self,t,usr_cmd,ca_cmd,ts_cmd,alpha,cmd):
-        self.timesteps=np.append(self.timesteps,t)
-        self.usr_cmd=np.append(self.usr_cmd,[usr_cmd],axis=0)
-        self.ca_cmd=np.append(self.ca_cmd,[ca_cmd],axis=0)
-        self.ts_cmd=np.append(self.ts_cmd,[ts_cmd],axis=0)
-        #self.alpha=np.append(self.alpha,alpha,axis=0)
-        self.cmd=np.append(self.cmd,[cmd],axis=0)
-    
-    def save_plot(self,show=False):
         
-        f_usr, axs = plt.subplots(2,1, sharey=True)
-        axs[0].plot(self.timesteps,self.usr_cmd[:,0])
-        axs[0].set_title('linear vel')
-        axs[1].plot(self.timesteps,self.usr_cmd[:,1])
-        axs[1].set_title('angular vel')
-        path = os.path.join(self.dir,'usr_cmd.png')
-        plt.savefig(path)
+    
+    def store_act(self,t,usr_cmd,ca_cmd,ts_cmd,alpha,cmd):
+        self.timesteps.append(t)
+        self.usr_cmd.append(usr_cmd)
+        self.ca_cmd.append(ca_cmd)
+        self.ts_cmd.append(ts_cmd)
+        self.alpha.append(alpha)
+        self.cmd.append(cmd)
 
-        f_ca, axs = plt.subplots(2,1, sharey=True)
-        axs[0].plot(self.timesteps,self.ca_cmd[:,0])
-        axs[0].set_title('linear vel')
-        axs[1].plot(self.timesteps,self.ca_cmd[:,1])
-        axs[1].set_title('angular vel')
-        path = os.path.join(self.dir,'ca_cmd.png')
-        plt.savefig(path)
-        
-        f_ts, axs = plt.subplots(2,1, sharey=True)
-        axs[0].plot(self.timesteps,self.ts_cmd[:,0])
-        axs[0].set_title('linear vel')
-        axs[1].plot(self.timesteps,self.ts_cmd[:,1])
-        axs[1].set_title('angular vel')
-        path = os.path.join(self.dir,'ts_cmd.png')
-        plt.savefig(path)
-
-        f_com, axs = plt.subplots(2,1, sharey=True)
-        axs[0].plot(self.timesteps,self.cmd[:,1])
-        axs[0].set_title('linear vel')
-        axs[1].plot(self.timesteps,self.cmd[:,1])
-        axs[1].set_title('angular vel')
-        path = os.path.join(self.dir,'commands.png')
-        plt.savefig(path)
-
-        f_a= plt.plot( self.timesteps,self.alpha)
-        #plt.legend(['usr_a','ca_a','ts_a'])
-        path = os.path.join(self.dir,'alpha.png')
-        plt.savefig(path)
-
-
-        print('Plots saved in: ',self.dir)
-
-        if not self.description=='':
-            with open(os.path.join(self.dir,'description.txt'), mode='w') as f:
-                f.write(self.description)
-
-        if show:
-            plt.show()
+    def store_train(self,epoch,reward,loss):
+        self.epochs.append(epoch)
+        self.rewards.append(reward)
+        self.mean_loss.append(loss)
+       
 
     def close(self):
         plt.close('all')
 
     def save_dict(self):
-        dict = {
-            'timesteps':self.timesteps,
-            'usr_cmd':self.usr_cmd,
-            'ca_cmd':self.ca_cmd,
-            'ts_cmd':self.ts_cmd,
-            'cmd':self.cmd,
-            'alpha':self.alpha,
-            'env':self.env,
-            'goal':self.goal,
-            'obs':self.obs_poses,
-            'ranges':self.ranges,
-        }
-        where = os.path.join(self.dir,'plot_dict.pkl')
+        if self.type=='act':
+            dict = {
+                'type':self.type,
+                'timesteps':self.timesteps,
+                'usr_cmd':self.usr_cmd,
+                'ca_cmd':self.ca_cmd,
+                'ts_cmd':self.ts_cmd,
+                'cmd':self.cmd,
+                'alpha':self.alpha,
+                'env':self.env,
+                'goal':self.goal,
+                'obs':self.obs_poses,
+                'ranges':self.ranges
+            }
+            where = os.path.join(self.dir,'plot_dict.pkl')
+
+        else:
+            dict = {
+                'type':self.type,
+                'epoch':self.epochs,
+                'reward':self.rewards,
+                'loss':self.mean_loss
+            }
+            where = os.path.join(self.dir,'train_dict.pkl')
+
         with open(where, 'wb') as handle:
             pickle.dump(dict, handle, protocol=pickle.HIGHEST_PROTOCOL)
         print('Plots saved in: ',where)
+    
 
     def load_dict(self,dict):
         #where = os.path.join(self.dir,dict_name)
         #with open(where, 'rb') as handle:
         #    dict = pickle.load(handle)
-        self.timesteps=dict['timesteps']
-        self.usr_cmd=dict['usr_cmd']
-        self.ca_cmd=dict['ca_cmd']
-        self.ts_cmd=dict['ts_cmd']
-        self.alpha=dict['alpha']
-        self.cmd=dict['cmd']
+        self.type = dict['type']
+        if self.type=='act':
+            self.timesteps=dict['timesteps']
+            self.usr_cmd=dict['usr_cmd']
+            self.ca_cmd=dict['ca_cmd']
+            self.ts_cmd=dict['ts_cmd']
+            self.alpha=dict['alpha']
+            self.cmd=dict['cmd']
+        else:
+            self.epoch = dict['epoch']
+            self.reward = dict['reward']
+            self.loss = dict['loss']
         
 def clamp_angle(theta):
-    sign=np.sign(theta)
-    theta = (abs(theta)%6.2832)*sign  # 2*np.pi
-    if theta>np.pi:theta = theta-2*np.pi
-    elif theta<-np.pi:theta = theta+2*np.pi
+    while theta>np.pi:
+        theta-=2*np.pi
+    while theta<-np.pi:
+        theta+=2*np.pi
     return theta
+
+
+def write_console(header,alpha,a_opt,danger,dt):
+    l = [header,
+        ' - Alpha = ' + str(round(alpha,1)),
+        ' - Alpha_opt = ' + str(round(a_opt,1)),
+        ' - Danger lev = ' + str(danger),
+        ' - dt = ' + str(dt)]
+    
+    for _ in range(len(l)):
+        sys.stdout.write("\x1b[1A\x1b[2K") # move up cursor and delete whole line
+    for i in range(len(l)):
+        sys.stdout.write(l[i] + "\n") # reprint the lines
+
 
 class Contact():
     def __init__(self,msg:ContactsState):

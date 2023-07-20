@@ -1,11 +1,12 @@
 
 import numpy as np
+import rospy
 import random
 import torch
 import torch.nn as nn
 from torch.optim import Adam
 from collections import deque
-from RL_agent.model import Qnet
+from RL_agent.model import Qnet,Qnet_new
 from RL_agent.ERB import Prioritized_ERB
 from RL_agent.utils import *
 from copy import deepcopy
@@ -26,12 +27,11 @@ class DDQN(object):
         # Create Actor and Critic Network
         net_cfg = {
             'hidden1':args.hidden1, 
-            'hidden2':args.hidden2, 
-            'init_w':args.init_w
-        }
+            'hidden2':args.hidden2
+                            }
 
         self.network = Qnet(self.n_states,self.n_frames, self.n_actions,**net_cfg)
-        self.target_network = Qnet(self.n_states,self.n_frames, self.n_actions,**net_cfg)
+        self.target_network = deepcopy(Qnet(self.n_states,self.n_frames, self.n_actions,**net_cfg))
 
         self.optim  = Adam(self.network.parameters(), lr=self.lr)
         self.loss= nn.MSELoss()
@@ -46,13 +46,16 @@ class DDQN(object):
         self.gamma = args.discount
         self.tau = args.tau
         self.discount = args.discount
-        self.epsilon_decay=0.995
-        self.epsilon = 0.5
+        self.epsilon_decay=0.999
+        self.epsilon = 0.7
         self.epsilon_min=0.1
         self.is_training = args.is_training
         self.policy_freq=2 #delayed actor update
-        self.max_train_iter=args.train_iter
+
+
         self.train_iter = 0
+        self.sync_frequency=200
+        self.max_iter = args.max_train_iter
 
         #initializations
         self.a_t = 1.0 # Most recent action
@@ -163,10 +166,15 @@ class DDQN(object):
         self.buffer.update_data(abs(TD_error), indices)
         
 
-      
-            #soft_update(self.actor_target, self.actor, self.tau)
-            #soft_update(self.critic_target, self.critic, self.tau)
+        if self.train_iter%self.sync_frequency:
+            soft_update(self.target_network, self.network, self.tau)
+
+        if self.train_iter>self.max_iter:
+            rospy.signal_shutdown('Terminate training')
+
             #print('policy loss: ',policy_loss.item())
+        
+
 
 
 
@@ -194,8 +202,7 @@ class DDQN(object):
             next_state = [np.array(self.observations),self.sVars]
 
             self.buffer.store(state=state, action=self.action_space.index(self.a_t),
-                              reward=r_t,done=t_t, next_state=next_state ) #append sample in memory
-            
+                              reward=r_t,done=t_t, next_state=next_state )
             
 
             
@@ -208,8 +215,12 @@ class DDQN(object):
         self.network.load_state_dict(
             torch.load('{}/q_network.pkl'.format(output_dir))
         )
+        self.target_network.load_state_dict(
+            torch.load('{}/q_network.pkl'.format(output_dir))
+        )
 
     def save_model(self,output_dir):
+        print('SAVE MODEL')
         torch.save(
             self.network.state_dict(),
             '{}/q_network.pkl'.format(output_dir)

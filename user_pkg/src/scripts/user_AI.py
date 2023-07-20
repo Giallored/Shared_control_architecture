@@ -7,6 +7,8 @@ from std_msgs.msg import Bool,String
 from gazebo_msgs.msg import ModelStates
 import numpy as np
 from SC_navigation.utils import *
+from SC_navigation.robot_models import TIAgo
+
 
 
 
@@ -37,17 +39,22 @@ class User():
         
 
         #threshold on bearing to turn 
-        self.theta_th = np.pi*0.3
+        self.theta_th = np.pi*0.35
        
         #self.vel_cmd = Twist()
         self.rate=rospy.Rate(rate) # 10hz
+        
+        model_msg = rospy.wait_for_message('gazebo/model_states', ModelStates, timeout=None)
+        self.update(model_msg)
+
         
 
     def main(self):
         print('User node is ready!')
         rospy.Subscriber('goal',String,self.set_goal)
+        rospy.Subscriber('gazebo/model_states',ModelStates,self.update)
+
         while not rospy.is_shutdown():
-            self.update()
             cmd = self.get_cmd()
             self.pub.publish(cmd)
             self.rate.sleep()
@@ -62,6 +69,8 @@ class User():
             cmd = self.continue_act(dist,theta)
 
         return cmd
+
+
     
 
     def get_goal_dist(self):
@@ -108,10 +117,10 @@ class User():
 
 
     
-    def update(self):
-        self.obj_dict = get_sim_info()
+    def update(self,model_msg):
+        self.obj_dict,vel = get_sim_info(model_msg)
         self.goal_pos = self.obj_dict[self.goal_id].position
-        self.tiago.set_MBpose(self.obj_dict['tiago'])  
+        self.tiago.set_MBpose(self.obj_dict['tiago'],vel)  
 
     def set_goal(self,data):
         if data.data == 'END':

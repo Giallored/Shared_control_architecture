@@ -23,9 +23,12 @@ def to_tensor(array, use_cuda = False,volatile=False, requires_grad=False):
         #print('before ndarray is dtype:',ndarray.dtype)
     #ndarray=ndarray.astype('float64')
     #print('after ndarray is dtype:',ndarray.dtype)
-    return Variable(
-        torch.from_numpy(array), volatile=volatile, requires_grad=requires_grad
-    ).type(dtype)
+    
+    out = Variable(torch.from_numpy(array), volatile=volatile, requires_grad=requires_grad).type(dtype)
+    return out
+    
+    
+    
 
 def soft_update(target, source, tau):
     for target_param, param in zip(target.parameters(), source.parameters()):
@@ -59,7 +62,7 @@ class HyperParams:
         self.output=hp_dict['output']
         self.debug=hp_dict['debug']
         self.init_w=hp_dict['init_w']
-        self.train_iter=hp_dict['train_iter']
+        self.max_train_iter=hp_dict['max_train_iter']
         self.sigma=hp_dict['sigma']
         self.seed=hp_dict['seed']
         self.max_epochs=hp_dict['max_epochs']

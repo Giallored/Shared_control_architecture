@@ -99,7 +99,7 @@ class DDPG(object):
     def reset(self,init_obs,init_cmd,init_act):
         self.observations=deque([init_obs]*self.n_frames,maxlen=self.n_frames)
         self.sVars = init_cmd
-        self.a_t=np.array(init_act)
+        self.a_t=init_act
         self.episode_value_loss=0.
         self.episode_policy_loss=0.
 
@@ -107,11 +107,11 @@ class DDPG(object):
         self.train_iter+=1
         # Sample batch
         obs_batch,svar_batch,a_batch,r_batch,next_obs_batch,next_svar_batch,t_batch = self.memory.sample_and_split(self.batch_size)
-
+        
         obs_tsr = to_tensor(obs_batch,use_cuda=self.use_cuda).reshape(self.batch_size,self.n_frames,-1)
+            
         svar_tsr = to_tensor(svar_batch,use_cuda=self.use_cuda).reshape(self.batch_size,-1)
         s_tsr =[obs_tsr,svar_tsr]
-
         next_obs_tsr = to_tensor(next_obs_batch,use_cuda=self.use_cuda).reshape(self.batch_size,self.n_frames,-1)
         next_svar_tsr = to_tensor(next_svar_batch,use_cuda=self.use_cuda).reshape(self.batch_size,-1)
         next_s_tsr = [next_obs_tsr, next_svar_tsr]
@@ -190,7 +190,7 @@ class DDPG(object):
     def observe(self, r_t, s_t1, done):
         obs_t1,sVar_t1=s_t1
         if self.is_training:
-            self.memory.append(state=[np.array(self.observations),self.sVars],
+            self.memory.append(state=[self.observations,self.sVars],
                                action = self.a_t, reward = r_t, terminal =done) #append sample in memory
             self.observations.append(obs_t1)
             self.sVars = sVar_t1
@@ -206,30 +206,30 @@ class DDPG(object):
         return action
 
     def select_action(self, s_t):
+
         obs_t,cmd_t=s_t
-        #assemble the state
         observation=deepcopy(self.observations)
+
+        #assemble the state
         observation.append(obs_t)
+        obs_tsr = to_tensor(np.asarray(observation, dtype='float'),use_cuda=self.use_cuda).reshape(1,self.n_frames,-1)
         
-        obs_tsr = to_tensor(np.array(observation),use_cuda=self.use_cuda).reshape(1,self.n_frames,-1)
+            
         cmd_tsr = to_tensor(cmd_t,use_cuda=self.use_cuda).reshape(1,-1)
         s_tsr = [obs_tsr,cmd_tsr]
         #get the optimal action (no noise)
         a_opt = self.actor(s_tsr)
-        #print('\n---')
-        #print('a_opt: ',a_opt)
-        
+
         if self.is_training:
             epsilon = torch.normal(mean=0, std=self.sigma_w,size=a_opt.shape).clamp(-self.noise_clip,self.noise_clip)#1))  #Gaussian Noise
             self.sigma_w*=self.sigma_decay
-            a_noise = (a_opt+epsilon).clamp(0,1)
+            a_noise = (a_opt+epsilon).clamp(0,1).item()
             #self.update_noise(a_opt,action)
-            action = to_numpy(a_noise,self.use_cuda).squeeze(0)
+            action = a_noise
         else:
-            action = to_numpy(a_opt,self.use_cuda).squeeze(0)
+            action = a_opt.item()
         self.a_t = action
-
-        return action,to_numpy(a_opt,self.use_cuda).squeeze(0)
+        return action,a_opt.item()
 
     
     
