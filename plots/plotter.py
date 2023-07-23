@@ -13,20 +13,20 @@ def get_plots(parent_dir):
     else:
         print('NO train plots')
 
-    for folder_name in os.listdir(parent_dir):
-        dir = os.path.join(parent_dir,folder_name)
-        check_dir = elegibility("plot_dict.pkl",dir)
-        if check_dir:
-            print(f' - {folder_name} -> YES')
-            plot = Plot(dir,"plot_dict.pkl")
-            
-            plot.save_plot()
-            plot.close()
-            
-            #frame = Frame(parent_dir,folder_name,"frames.pkl")
-            #frame.save_plot()
-        else:
-            print(f' - {folder_name} -> NO')
+    #for folder_name in os.listdir(parent_dir):
+    #    dir = os.path.join(parent_dir,folder_name)
+    #    check_dir = elegibility("plot_dict.pkl",dir)
+    #    if check_dir:
+    #        print(f' - {folder_name} -> YES')
+    #        plot = Plot(dir,"plot_dict.pkl")
+    #        
+    #        plot.save_plot()
+    #        plot.close()
+    #        
+    #        #frame = Frame(parent_dir,folder_name,"frames.pkl")
+    #        #frame.save_plot()
+    #    else:
+    #        print(f' - {folder_name} -> NO')
 
 def elegibility(name,folder):
     path_pkl = os.path.join(folder,name)  

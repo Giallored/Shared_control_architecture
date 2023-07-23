@@ -151,8 +151,11 @@ class Prioritized_ERB:
             self.alpha_sum_p -= priority_old**self.alpha
             self.alpha_sum_p += priority_new**self.alpha
             probability_new = td**self.alpha / self.alpha_sum_p
-            self.data_buffer[index] = self.data(priority_new, probability_new, weight_new, index) 
 
+            try:
+                self.data_buffer[index] = self.data(priority_new, probability_new, weight_new, index) 
+            except:
+                self.data_buffer[index] = self.data(priority_new, probability_new, 1, index) 
 
     #update of all the parameters
     def update_param(self):

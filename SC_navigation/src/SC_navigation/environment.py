@@ -15,6 +15,7 @@ class Environment():
                  name:str,
                  robot,
                  n_agents=3,
+                 n_obstacles=3,
                  delta_goal=1,
                  delta_coll=0.7,
                  theta_coll=0.7,
@@ -37,6 +38,7 @@ class Environment():
         self.is_goal=False
         self.formation_r =3.0
         self.random_warmup=True
+        self.n_obstacles = n_obstacles
 
 
 
@@ -84,11 +86,12 @@ class Environment():
                 else:
                     self.obs_ids.append(id)
         self.goal_id = random.sample(self.goal_list,1)[0]
+        self.n_obstacles = len(self.obs_ids)
 
 
-    def reset(self,mode):
+    def reset(self,eval_lev):
         self.reset_sim()
-        self.change_obj_pose(mode)
+        self.change_obj_pose(eval_lev)
         #update model poses
         model_msg = rospy.wait_for_message('gazebo/model_states', ModelStates, timeout=None)
         self.obj_dict,tiago_vels = get_sim_info(model_msg)
@@ -131,17 +134,26 @@ class Environment():
         else:
             return False
         
-    def danger_level(self):
+    def danger(self):
         pos=self.cls_obstacle
         dist = np.linalg.norm(pos)
         theta = np.arctan2(pos[1],pos[0])
-        if self.robot.mb_v>0.1:
-            if dist<self.delta_coll and abs(theta)<np.arctan2(self.delta_coll,0.2):
-                    return 2
-            if dist<self.delta_coll*2 and abs(theta)<self.theta_coll:
-                return 1
-           
-        return 0
+        theta_th = np.arcsin(0.35/np.clip(dist,0.35,np.inf))
+
+        if dist<1.5 and dist>=0.5:
+            if abs(theta)<theta_th:
+                danger =3
+            else:
+                danger =2
+        elif dist<0.5:
+            if abs(theta)<theta_th:   #np.arctan2(self.delta_coll,0.2):
+                danger= 5
+            else:
+                danger= 4
+        else:
+            danger = 1
+
+        return danger,(dist,theta/np.pi*180)
 
     def stuck_check(self,stamp=True):
         if self.robot.mb_position == self.robot.prev_mb_position:
@@ -199,10 +211,20 @@ class Environment():
         
         obs_dist = np.linalg.norm(self.cls_obstacle)
         # arbitration oriented
-        if self.danger_level()==2:
-            r_alpha = self.R_alpha*(1-self.cur_act)      #if safe, must go straigth to the goal
+        danger,_ = self.danger()
+
+        if danger==1 and not self.cur_act:
+            r_alpha = self.R_alpha
+        elif danger==2 and self.cur_act>0.75+0.01:
+            r_alpha = self.R_alpha
+        elif danger==3 and self.cur_act>0.5+0.01:
+            r_alpha = self.R_alpha
+        elif danger==4 and self.cur_act>0.25+0.01:
+            r_alpha = self.R_alpha
+        elif danger==4 and self.cur_act>0.01:
+            r_alpha = self.R_alpha
         else:
-            r_alpha = self.R_alpha*self.cur_act      #if close to the obstacles, must avoid
+            r_alpha = 0
         
 
         # command oriented 
@@ -233,7 +255,7 @@ class Environment():
 
 
 
-    def change_obj_pose(self,mode):
+    def change_obj_pose(self,eval):
         #for 5 obstacle
         r = 3
         if not r%2==0:
@@ -242,6 +264,7 @@ class Environment():
             r_=r
         l = self.obs_ids 
         n = len(l)
+        h=0.3
         #if self.step%50==0 and self.formation_r>=4.0:
         #    self.formation_r-=0.5
 
@@ -252,45 +275,51 @@ class Environment():
         #ax_x = np.linspace(2,2*r,int(2*r)+1)
         #ax_y = np.linspace(-r,r,int(2*r))
 
-        #for 5 obstacle
-        ax_x = np.linspace(1,r+1,int(r)+1)
-        ax_y = np.linspace(-r_/2,r_/2,int(r_)+1)
-
+       
         #if r%1==0.0: grid.remove([0.0,0.0])
-        if mode == 'train':
-            grid = [[x,y] for x in ax_x for y in ax_y]
-            new_poses = random.sample(grid, n)
+        if not eval == None:
+            if  self.n_obstacles ==5:
+                if eval == 0:
+                    new_poses = [[1.0,1.0],[1.0,-1.0],[2.0,0.0],[3.0,-1.0],[3.5,1.0]]
+                else:
+                    [[1.0,0.1],[1.0,-0.75],[2.0,0.0],[3.0,0.75],[3.5,-0.75]]
+            elif self.n_obstacles ==3:
+                if eval == 0:
+                    new_poses = [[2.0,0.1],[3.0,0.0],[4.0,-1.0]]
+                else:
+                    new_poses = [[4.0,0.1],[3.0,0.0],[2.0,-1.0]]
+            
+            
+            
+            
+            self.goal_pos = [r_+1,0.0,h]
         else:
-            new_poses = [[1.0,0.5],[1.0,-0.5],[2.25,0.0],[3.5,0.5],[3.5,-0.5]]
+            #for 5 obstacle
+            #ax_x = np.linspace(1,r+1,int(r)+1)
+            #ax_y = np.linspace(-r_/2,r_/2,int(r_)+1)
+            #grid = [[x,y] for x in ax_x for y in ax_y]
+            #new_poses = random.sample(grid, n)
+            #self.goal_pos =random.sample([[r_+1,y,0.01] for y in ax_y],1)[0]
+
+            #for 3 obstacle
+            y = np.random.uniform(low=-1.0, high=1.0, size=3)
+            new_poses = [[2.0,y[0]],[3.0,y[1]],[4.0,y[2]]]
+            self.goal_pos = [6.0,0.0,h]
 
         for i in range(n):
             obj_id =l[i]
             state_msg = ModelState()
             new_pos = new_poses[i]
-            h=0.3
+            
 
             state_msg.model_name = obj_id
             state_msg.pose.position.x = new_pos[0]
             state_msg.pose.position.y = new_pos[1]
             state_msg.pose.position.z = h
-            #state_msg.pose.orientation.x = 0
-            #state_msg.pose.orientation.y = 0
-            #state_msg.pose.orientation.z = 0
-            #state_msg.pose.orientation.w = 0
             send_state_msg(state_msg)
             
 
         #change goal position
-        r__=r_+1
-        ax = np.linspace(-r/2,r/2,int(2*r)+1)
-        grid_goal =[
-            #*[[x,r_]for x in ax],
-            #*[[x,r_] for x in ax],
-            *[[r__,y,0.01] for y in ax],
-            #*[[0,y] for y in ax]
-             ]
-        self.goal_pos = random.sample(grid_goal, 1)[0]
-
         state_msg = ModelState()
         state_msg.model_name = self.goal_id
         state_msg.pose.position.x = self.goal_pos[0]

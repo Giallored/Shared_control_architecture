@@ -46,7 +46,6 @@ class HyperParams:
         self.hidden1=hp_dict['hidden1']
         self.hidden2=hp_dict['hidden2']
         self.rate=hp_dict['rate']
-        self.prate=hp_dict['prate']
         self.warmup=hp_dict['warmup']
         self.discount=hp_dict['discount']
         self.bsize=hp_dict['bsize']

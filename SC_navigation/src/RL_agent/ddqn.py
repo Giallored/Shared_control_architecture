@@ -6,11 +6,13 @@ import torch
 import torch.nn as nn
 from torch.optim import Adam
 from collections import deque
-from RL_agent.model import Qnet,Qnet_new
+from RL_agent.model import Qnet,Qnet_new,DwelingQnet
 from RL_agent.ERB import Prioritized_ERB
 from RL_agent.utils import *
 from copy import deepcopy
 from torch.nn import Softmax
+from torch.optim.lr_scheduler import ReduceLROnPlateau,LambdaLR,StepLR
+from statistics import mean
 
 # from ipdb import set_trace as debug
 
@@ -22,7 +24,7 @@ class DDQN(object):
         self.n_actions= n_actions
         self.action_space = list(np.linspace(0,1,n_actions))
         self.n_frames = n_frames
-        self.lr = 0.0001
+        self.lr = args.rate
         
         # Create Actor and Critic Network
         net_cfg = {
@@ -30,11 +32,22 @@ class DDQN(object):
             'hidden2':args.hidden2
                             }
 
-        self.network = Qnet(self.n_states,self.n_frames, self.n_actions,**net_cfg)
-        self.target_network = deepcopy(Qnet(self.n_states,self.n_frames, self.n_actions,**net_cfg))
+        #self.network = Qnet(self.n_states,self.n_frames, self.n_actions,**net_cfg)
+        self.network = DwelingQnet(self.n_states,self.n_frames, self.n_actions,**net_cfg)
+        self.target_network = deepcopy(self.network)
 
-        self.optim  = Adam(self.network.parameters(), lr=self.lr)
+        self.optimizer  = Adam(self.network.parameters(), lr=self.lr)
         self.loss= nn.MSELoss()
+
+        #self.scheduler = ReduceLROnPlateau(self.optimizer, mode='min', factor=0.1, patience=10, threshold=5,
+        #                   threshold_mode='rel', cooldown=0, min_lr=0.00001, eps=1e-08)
+        #self.scheduler.step(1000)
+        self.window_len = 10
+        self.loss_window = deque([1000]*self.window_len,maxlen=self.window_len)
+        self.last_lambda_mean=1000
+
+        #self.lr_scheduler = LambdaLR(optimizer=self.optimizer, lr_lambda=self.lambda_rule)
+        self.lr_scheduler = StepLR(self.optimizer, step_size=15000, gamma=0.1)
 
         hard_update(self.target_network, self.network) # Make sure target is with the same weight
         
@@ -47,7 +60,7 @@ class DDQN(object):
         self.tau = args.tau
         self.discount = args.discount
         self.epsilon_decay=0.999
-        self.epsilon = 0.7
+        self.epsilon = 0.8
         self.epsilon_min=0.1
         self.is_training = args.is_training
         self.policy_freq=2 #delayed actor update
@@ -60,6 +73,7 @@ class DDQN(object):
         #initializations
         self.a_t = 1.0 # Most recent action
         self.episode_loss=0.
+        
 
         #use_cuda = torch.cuda.is_available()
         self.use_cuda = False
@@ -115,13 +129,9 @@ class DDQN(object):
         return action,a_opt
     
 
-
-
-    def update_policy(self):
-        self.train_iter+=1
+    def compute_loss(self,batch):
         # Sample batch
-
-        obs_b, svar_b, a_batch, r_b, t_b, next_obs_b, next_svar_b, indices, weights = self.buffer.sample(self.batch_size)
+        obs_b, svar_b, a_batch, r_b, t_b, next_obs_b, next_svar_b, indices, weights = batch
 
         obs_tsr = to_tensor(obs_b,use_cuda=self.use_cuda)#.reshape(self.batch_size,self.n_frames,-1)
         svar_tsr = to_tensor(svar_b,use_cuda=self.use_cuda)#.reshape(self.batch_size,-1)
@@ -149,37 +159,36 @@ class DDQN(object):
         loss = self.loss(q,target_q)
         self.episode_loss+=loss.item()
 
-        # backpropagation
         with torch.no_grad():
             loss_copy = loss.detach()
             weight = sum(np.multiply(weights, loss_copy))
         loss *= weight
 
-        self.network.zero_grad()
-        loss.backward()
-        self.optim.step()
-
-
         # compute the TD error and update the buffer
-        
         TD_error = abs(target_q.detach() - q.detach()).numpy()
         self.buffer.update_data(abs(TD_error), indices)
+
+
+        return loss
+
+    def update_policy(self):
         
+        batch = self.buffer.sample(self.batch_size)
+        loss = self.compute_loss(batch)
+
+        self.network.zero_grad()
+        loss.backward()
+        self.optimizer.step()
 
         if self.train_iter%self.sync_frequency:
             soft_update(self.target_network, self.network, self.tau)
 
         if self.train_iter>self.max_iter:
             rospy.signal_shutdown('Terminate training')
-
-            #print('policy loss: ',policy_loss.item())
         
-
-
-
-
-        #store the losses
-        
+        self.train_iter+=1
+        if len(self.loss_window)== self.window_len:
+            self.lr_scheduler.step()
 
 
     def eval(self):
@@ -193,7 +202,7 @@ class DDQN(object):
         self.critic.cuda()
         self.critic_target.cuda()
 
-    def observe(self, r_t, s_t1, t_t):
+    def observe(self, r_t, s_t1, t_t,save=True):
         obs_t1,sVar_t1=s_t1
         if self.is_training:
             state = [np.array(self.observations),self.sVars]
@@ -201,7 +210,8 @@ class DDQN(object):
             self.sVars = sVar_t1
             next_state = [np.array(self.observations),self.sVars]
 
-            self.buffer.store(state=state, action=self.action_space.index(self.a_t),
+            if save: 
+                self.buffer.store(state=state, action=self.action_space.index(self.a_t),
                               reward=r_t,done=t_t, next_state=next_state )
             
 
@@ -225,4 +235,13 @@ class DDQN(object):
             self.network.state_dict(),
             '{}/q_network.pkl'.format(output_dir)
         )
+
+
+    def lambda_rule(self,epoch):
+        if epoch%10==0:
+            cur_mean = mean(self.loss_window)
+            if cur_mean/self.last_lambda_mean<=0.1:
+                return 0.1
+        return 1
+            
 

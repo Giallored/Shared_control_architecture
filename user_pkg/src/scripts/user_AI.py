@@ -29,17 +29,17 @@ class User():
         self.stop_cmd = cmd_to_twist([0.0,0.0])
 
 
-        self.max_v = 1.0
+        self.max_v = 0.8
         self.min_v = -0.8
         self.max_om = 1.0
         self.min_om = -1.0
         self.k_l = 1
         self.k_a = 5        
-        self.max_noise = 0.2
+        self.max_noise = 0.01
         
 
         #threshold on bearing to turn 
-        self.theta_th = np.pi*0.35
+        self.theta_th = np.pi/3
        
         #self.vel_cmd = Twist()
         self.rate=rospy.Rate(rate) # 10hz
@@ -119,7 +119,7 @@ class User():
     
     def update(self,model_msg):
         self.obj_dict,vel = get_sim_info(model_msg)
-        self.goal_pos = self.obj_dict[self.goal_id].position
+        self.goal_pos = [6.0,0.0,0.01] #self.obj_dict[self.goal_id].position
         self.tiago.set_MBpose(self.obj_dict['tiago'],vel)  
 
     def set_goal(self,data):

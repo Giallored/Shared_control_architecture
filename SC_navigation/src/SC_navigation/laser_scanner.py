@@ -50,7 +50,7 @@ class LaserScanner():
         return msg
     
 
-    def preproces(self,ranges,max_dist,max_span=np.pi/3):
+    def preproces(self,ranges,max_dist,max_span=np.pi):
         new_ranges = np.clip(ranges,0,max_dist)
         new_ranges = np.subtract(np.ones(new_ranges.shape)*max_dist,new_ranges)
         ranges2trim = max_span//self.angle_increment

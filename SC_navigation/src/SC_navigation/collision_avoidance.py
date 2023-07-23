@@ -14,11 +14,11 @@ import pickle
 
 
 class Collision_avoider():
-    def __init__(self, delta=0.7,K_lin=0.1,K_ang=0.1,dir=None):
+    def __init__(self, delta=0.7,K_lin=0.1,K_ang=0.1,k_r=10.0,dir=None):
         self.th_dist=delta   #distance threshold
         self.K_lin= K_lin
         self.K_ang= K_ang
-        self.k_r = 5.0
+        self.k_r = k_r
         self.gamma = 2
         self.frames={}
         self.f_i = 0
@@ -89,9 +89,9 @@ class Collision_avoider():
         F_v = np.array([dU_r[1],-dU_r[0]]) 
         dx_d = F_v[0]
         dy_d = F_v[1]
-        dtheta_d = np.arctan2(dy_d,dx_d)
+        dtheta_d = np.arctan2(dy_d,dx_d)*(1.0+0.10*(theta/np.pi)**2)
         dtheta_d = clamp_angle(dtheta_d)
-        v_cmd = self.K_lin*(theta/2)**2
+        v_cmd = self.K_lin*(theta/np.pi)**2
         #print(dx_d*np.cos(theta)+dy_d*np.sin(theta))
         om_cmd = self.K_ang*(dtheta_d)* sign
         return [v_cmd,om_cmd]

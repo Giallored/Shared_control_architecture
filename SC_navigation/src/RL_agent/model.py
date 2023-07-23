@@ -148,7 +148,7 @@ class Qnet(nn.Module):             # Q-learning network
         # architecture
         self.conv1 = nn.Conv1d(n_frames,self.n_kernels,kernel_size=5,stride=2)
         self.conv2 = nn.Conv1d(self.n_kernels,1,kernel_size=3,stride=2) 
-        self.fc1 = nn.Linear(41, hidden1)
+        self.fc1 = nn.Linear(138, hidden1)
         self.fc2 = nn.Linear(n_states+hidden1, hidden2)
         self.fc3 = nn.Linear(hidden2, n_actions)        
 
@@ -172,6 +172,66 @@ class Qnet(nn.Module):             # Q-learning network
         out = self.relu(self.fc2(torch.cat([out,cmd],-1)))
         out = self.fc3(out)
         return out.squeeze(1)
+
+
+
+
+class DwelingQnet(nn.Module):
+
+    def __init__(self, n_states,n_frames, n_actions,hidden1,hidden2,init_w=3e-3):
+        super(DwelingQnet, self).__init__()
+        self.n_frames = n_frames
+        self.n_actions = n_actions
+        self.n_kernels = 16
+
+        # architecture
+        self.conv = nn.Sequential(
+            nn.Conv1d(n_frames,self.n_kernels,kernel_size=5,stride=2),
+            nn.MaxPool1d(3,stride=1),
+            nn.BatchNorm1d(self.n_kernels),
+            nn.ReLU(),
+            nn.Conv1d(self.n_kernels,1,kernel_size=3,stride=2) ,
+            nn.BatchNorm1d(1),
+            nn.MaxPool1d(3,stride=1),
+            nn.ReLU(),
+        )
+
+        self.blend = nn.Sequential(
+            nn.Linear(131+n_states, hidden1),
+            nn.ReLU(),
+        )
+
+        self.value_stream = nn.Sequential(
+            nn.Linear(hidden1, hidden2),
+            nn.ReLU(),
+            nn.Linear(hidden2, 1)
+        )
+
+        self.advantage_stream = nn.Sequential(
+            nn.Linear(hidden1, hidden2),
+            nn.ReLU(),
+            nn.Linear(hidden2, self.n_actions)
+        )
+
+
+    def forward(self,x):
+        img,cmd = x
+        bs = cmd.shape[0]
+        feat = self.conv(img)
+        feat = feat.view(bs, -1)
+        feat = self.blend(torch.cat([feat,cmd],-1))
+        vals = self.value_stream(feat)
+        adv = self.advantage_stream(feat)
+        qvals = vals + (adv - adv.mean())
+        
+        return qvals
+
+
+
+
+
+
+
 
 
 class Qnet_new(nn.Module):

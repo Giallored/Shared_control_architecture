@@ -6,6 +6,7 @@ import numpy as np
 from gazebo_msgs.msg import ContactsState,ModelStates
 import sys
 from SC_navigation.robot_models import TIAgo
+import random
 
 
 #from gazebo_msgs.msg._ContactState.ContactState import Contact
@@ -57,8 +58,9 @@ class Controller():
         self.max_epochs = self.hyperParam.max_epochs
         self.random_warmup = True
         self.step_warmap= 0
-        self.eval_levels = 3
-        self.eval_lev = 0
+        self.eval_levels = 1
+        self.eval_lev = None
+        self.to_observe = True
         
 
         #initializations
@@ -69,6 +71,7 @@ class Controller():
             delta=rospy.get_param('/controller/delta_coll'),
             K_lin=rospy.get_param('/controller/K_lin'),
             K_ang=rospy.get_param('/controller/K_ang'),
+            k_r=rospy.get_param('/controller/k_ac'),
             )
         self.ts_controller = Trajectory_smooter()
         self.tiago = TIAgo(clear =rospy.get_param('/controller/taigoMBclear'))
@@ -95,15 +98,20 @@ class Controller():
 
 
     def main(self):
-        
 
         if not self.model2load =="":
             self.agent.load_weights(self.model_dir)
             self.random_warmup = False
+            where = os.path.join(self.plot_dir,'train_dict.pkl')
+            with open(where, 'rb') as handle:
+                dict = pickle.load(handle)
+            self.train_plot.load_dict(dict)
+            self.epoch = self.train_plot.epoch[-1]
+            self.agent.epsilon=0.5
 
         print('Controller node is ready!')
         print(' - Mode: ',self.mode)
-        print(' - Model: ', self.model2load)
+        print(f' - Model: {self.model2load} (epoch {self.epoch})')
         print(' - Directory: ',self.model_dir)
 
         #-------Setup
@@ -111,102 +119,102 @@ class Controller():
         rospy.Subscriber('robot_bumper',ContactsState,self.env.callback_collision)
         rospy.Subscriber('gazebo/model_states',ModelStates,self.env.callback_robot_state)
         rospy.Subscriber('scan_raw',LaserScan,self.env.callback_scan)
+        rospy.Subscriber('usr_cmd_vel',Twist,self.calback)
+
         rospy.on_shutdown(self.shutdownhook)
 
-        print(f'\n---- EPOCH {self.epoch} -------------------------')
-        print(f"GOAL:'{self.env.goal_id}' -> {self.env.goal_pos}\n.\n.\n.\n.")
-        self.time=self.start_time
-
-        if self.mode=='test':
-            #self.agent.load_weights(self.model_dir)
-            self.agent.is_training = False
-            self.agent.eval() #makes the agents in evaluation mode
-            rospy.Subscriber('usr_cmd_vel',Twist,self.callback_SC)
-        elif self.mode=='train':
-            self.agent.is_training = True
-            rospy.Subscriber('usr_cmd_vel',Twist,self.callback_SC)
-        elif self.mode == 'direct':
-            rospy.Subscriber('usr_cmd_vel',Twist,self.callback_direct)
-
-        elif self.mode == 'classic':
-            rospy.Subscriber('usr_cmd_vel',Twist,self.callback_classic)
-        else:
-            rospy.ROSInterruptException
-        
+        #print(f'\n---- EPOCH {self.epoch} -------------------------')
+        #print(f"GOAL:'{self.env.goal_id}' -> {self.env.goal_pos}\n.\n.\n.\n.")
+        #self.time=self.start_time
         rospy.spin()
 
     
 
-    def callback_direct(self,data):        
-        usr_cmd = twist_to_cmd(data)
-        ca_cmd = self.ca_controller.get_cmd(self.env.pointCloud)
-        ts_cmd = self.ts_controller.get_cmd(self.env.time)
+    def callback(self, usr_msg):
+        usr_cmd =np.array(twist_to_cmd(usr_msg)) #direct control
+
+        if self.mode=='direct':
+            self.pub.publish(usr_msg)
+
+        elif self.mode=='classic':
+            self.control_classic(usr_cmd)
+
+        elif self.mode=='train':
+            self.agent.is_training = True
+            self.control_train(usr_cmd)
+
+        elif self.mode=='eval':
+            self.agent.is_training = False
+            self.control_eval(usr_cmd)
+
+        elif self.mode =='test':
+            self.agent.is_training = False
+            self.control_test(usr_cmd)
+
+        else:
+            rospy.ROSInterruptException
+            print('Mode is NOT supported!')
+
+
+    def control_classic(self,usr_cmd):
+        _,_,done = self.env.make_step()
+
+        ca_cmd = np.array(self.ca_controller.get_cmd(self.env.cls_obstacle)) 
+        
+        danger,dist = self.env.danger()
         t=rospy.get_time()-self.start_time
         dt = round(t - self.time,3)
         self.time = t
 
-        if ca_cmd==[0.0,0.0]:
-            alpha=[1.,0.0,0.]
-        else:
-            alpha=[0.,1.0,0.]
-
-        cmd=np.dot(alpha,[usr_cmd,ca_cmd,ts_cmd])
-        msg = cmd_to_twist(cmd)
-        self.pub.publish(msg)
-
-        # store the actions 
-        self.ts_controller.store_action(self.time,cmd)
-        self.env.update_act(alpha,usr_cmd,cmd)
-
-        #store the plots
-        self.plot.store_act(self.time,usr_cmd,ca_cmd,ts_cmd,alpha,cmd)
-        self.plot.save_dict()
-        if self.verbose:
-            self.display_commands_SC(alpha,usr_cmd,ca_cmd,ts_cmd,cmd)
-
-
-    def callback_classic(self,data):
-        _,_,done = self.env.make_step()
-
-        usr_cmd =np.array(twist_to_cmd(data)) #direct control
-        ca_cmd = np.array(self.ca_controller.get_cmd(self.env.cls_obstacle)) #collision avoidance  
-
-        if self.env.danger_level()==2:
-            alpha = 0.0 #(np.linalg.norm(self.env.cls_obstacle)/self.env.delta_coll)**3
-            print('cmd: ',ca_cmd)
-            module = 'User'
-
-        else:
+        if danger==1:
             alpha = 1.0
-            module = 'CA'
+            tag = '(U)'
+        elif danger==2:
+            alpha = 0.75
+            tag = '(CA)'
+        elif danger==3:
+            alpha = 0.5
+            tag = '(CA)'
+        elif danger==4:
+            alpha = 0.25
+            tag = '(CA)'
+        else:
+            alpha = 0.0 
+            tag = '(CA)'
+        header = 'STEP ' + str(self.env.step) +' - ' + tag
+        print('-')
+        print('danger: ',danger)
+        print('dist: ',dist)
+        print('U: ',usr_cmd)
+        print('CA: ',ca_cmd)
 
-        cmd = alpha*usr_cmd + (1-alpha)*ca_cmd
-        #cmd = [usr_cmd, alpha*usr_cmd[1] + (1-alpha)*ca_cmd[1]]
-        
+        if not (self.env.is_goal or self.env.is_coll):
+            write_console(header,alpha,usr_cmd[0],danger,dt)
+
+        cmd = alpha*usr_cmd + (1-alpha)*ca_cmd        
         msg = cmd_to_twist(cmd)
         self.pub.publish(msg)
         
         t=rospy.get_time()-self.start_time
         self.time = t
+
         if done:
-            
             self.reset()
 
-
-        if self.verbose:
-            self.display_commands_classic(module,cmd)
-        
         self.rate.sleep()
 
 
 
 
-    def callback_SC(self,data):
-        #get results fom the previous action and let the agent observe
-        observation,reward,done = self.env.make_step()
-        if self.mode == 'train' and (self.epoch>0 or self.env.step > self.hyperParam.warmup):
-            self.agent.update_policy()
+    def control_train(self,data):
 
+        #get results from the previous action and let the agent observe
+        observation,reward,done = self.env.make_step()
+
+        is_warmup = self.step_warmap <= self.hyperParam.warmup
+        if self.mode == 'train' and not is_warmup:
+            self.agent.update_policy()
+        
         self.episode_reward += reward
 
         if done: self.done_routine()
@@ -215,11 +223,9 @@ class Controller():
         #----------------------------------------------------------
         
         #update time
-        t=rospy.get_time()-self.start_time
-        dt = round(t - self.time,3)
-        self.time = t
+        dt = self.get_time()
         usr_cmd = np.array(twist_to_cmd(data))
-        danger = self.env.danger_level()
+        
 
         #get commands
         ca_cmd = np.array(self.ca_controller.get_cmd(self.env.cls_obstacle))
@@ -229,9 +235,9 @@ class Controller():
         #assemble and observe the last episode data
         state = [observation,state_vars]
 
-        self.agent.observe(reward,state, done)
+        self.agent.observe(reward,state, done,save=self.to_observe)
 
-        is_warmup = self.step_warmap > self.hyperParam.warmup
+        
         # get alpha from the DDPG    ==> as compute action
         if self.mode == 'train' and is_warmup:
             self.step_warmap+=1
@@ -247,8 +253,12 @@ class Controller():
             tag='(' + self.mode + ')'
             header = 'STEP ' + str(self.env.step) +' - ' + tag
 
+        danger,dist = self.env.danger()
+        #if danger>=3: self.to_observe = True
+        #else: self.to_observe = random.getrandbits(1)
+
         if not (self.env.is_goal or self.env.is_coll):
-            write_console(header,alpha,a_opt,danger,dt)
+            write_console(header,alpha,a_opt,danger,self.agent.lr_scheduler.get_last_lr(),dt)
         # blend commands and send the msg to the robot
         cmd= usr_cmd * alpha + ca_cmd * (1-alpha)
     
@@ -295,12 +305,12 @@ class Controller():
         print('Shout down...')
 
     def reset(self):
-        self.env.reset(self.mode)
+        self.env.reset(self.eval_lev)
         self.agent.reset(self.env.observation,np.array([0.0,0.0,0.0,0.0,1.0,0.0,0.0]),1.0)
         self.ts_controller.reset()
         self.pub_goal.publish(String(self.env.goal_id))
         self.episode_reward = 0.
-        if not self.plot_dir==None and self.mode=='train':
+        if not self.plot_dir==None and not self.mode=='eval':
             self.plot = Plot(
                 goal=self.env.goal_id,
                 env = self.env.name,
@@ -310,12 +320,16 @@ class Controller():
             self.ca_controller.dir = self.plot.dir
 
         self.start_time = rospy.get_time()
-
+    
+    def get_time(self):
+        t=rospy.get_time()-self.start_time
+        dt = round(t - self.time,3)
+        self.time = t
+        return dt
 
     def done_routine(self):
         self.env.pause()
-        mean_reward = self.episode_reward/self.env.step
-        self.mean_episode_rewards.append(mean_reward)            
+                  
         if self.agent.name == 'ddqn':
             mean_loss = self.agent.episode_loss/self.env.step
             self.mean_episode_losses.append(mean_loss)
@@ -326,42 +340,51 @@ class Controller():
             self.mean_episode_losses.append([mean_val_loss,mean_policy_loss])
             self.report_DDPG()
 
-        self.train_plot.store_train(self.epoch,mean_reward,mean_loss)
 
-
+        
         if self.mode=='train':
-            self.agent.save_model(self.model_dir)
-            if self.epoch>=self.max_epochs:     #END of TRAINING
+            epoch = self.epoch
+            self.epoch+=1
+            is_warmup = self.step_warmap <= self.hyperParam.warmup
+            if mean_loss>0.001: 
+                self.train_plot.store_train(self.epoch,self.episode_reward,mean_loss)
+                self.train_plot.save_dict()
+                if mean_loss<=min(self.train_plot.mean_loss):
+                    self.agent.save_model(self.model_dir)
+
+            if epoch>=self.max_epochs:     #END of TRAINING
                 self.pub_goal.publish('END')
                 rospy.signal_shutdown('Terminate training')
+                tag = 'END'
+            elif is_warmup:                     #still  WARMUP
+                tag = '(train) EPOCH '+str(self.epoch)
             else:
                 self.plot.save_dict()
-                self.train_plot.save_dict()
                 self.agent.update_hp()
-                tag = '(train) EPOCH '+str(self.epoch)
 
-                is_warmup = self.step_warmap > self.hyperParam.warmup
-
-                if self.epoch%5==0 and not is_warmup: 
+                if epoch%5==0:
                     self.mode='eval'
+                    self.eval_lev=0
                     self.agent.is_training = False
-                    tag = 'EVALUATION'
+                    tag = 'EVALUATION 0'
                 else:
-                    self.epoch+=1
+                    tag = '(train) EPOCH '+str(self.epoch)
 
 
         elif self.mode=='eval':   
-            
-            if mean_reward>0:
-                dir = os.path.join(self.model_dir,'level_'+str(self.eval_lev))
+            if self.env.is_goal:
+                level = str(self.eval_lev)
+                dir = os.path.join(self.model_dir,'level_'+level)
+                os.makedirs(dir, exist_ok=True)
                 self.agent.save_model(dir)
-                self.eval_lev+=1
+            self.eval_lev+=1
+            tag = 'EVALUATION '+str(self.eval_lev)
             
             if self.eval_lev > self.eval_levels:
+                self.eval_lev=None
                 self.mode='train'
                 self.agent.is_training = True
                 tag = '(train) EPOCH '+str(self.epoch)
-
             
         else:           #this is in general for mode = 'test'
             self.env.pause()
@@ -375,7 +398,7 @@ class Controller():
         self.env.unpause()
         self.reset()
         print(f'\n------------- {tag} -------------------------')
-        print(f"GOAL:'{self.env.goal_id}' -> {self.env.goal_pos}\n.\n.\n.\n.")
+        print(f"GOAL:'{self.env.goal_id}' -> {self.env.goal_pos}\n.\n.\n.\n.\n")
     
 
     def report_DDPG(self):
@@ -386,7 +409,7 @@ class Controller():
         if self.mode == 'train':
             print(' - sigma: ',self.agent.sigma_w)
             print(f' - mem. capacity: {self.agent.memory.actions.get_capacity()}%')
-            print(' - mean episode reward: ',self.mean_episode_rewards[-1])
+            print(' - episode reward: ',self.episode_reward)
             print(' - mean episode val. loss: ',self.mean_episode_losses[-1][0])
             print(' - mean episode pol. loss: ',self.mean_episode_losses[-1][1])
         print('---\n')
@@ -397,12 +420,12 @@ class Controller():
         print(' - mode: ',self.mode)
         #print(' - goal: ',self.env.goal_id)
         print(' - steps: ',self.env.step)
-        print(' - mean episode reward: ',self.mean_episode_rewards[-1])
+        print(' - episode reward: ',self.episode_reward)
 
         if self.mode == 'train':
             print(' - epsilon: ',self.agent.epsilon)
             print(f' - mem. capacity: {self.agent.buffer.get_capacity()*100}%')
-            print(' - mean episode pol. loss: ',self.mean_episode_losses[-1])
+            print(' - mean loss: ',self.mean_episode_losses[-1])
         print('---\n')
 
 
