@@ -76,6 +76,7 @@ class Controller():
         self.ts_controller = Trajectory_smooter()
         self.tiago = TIAgo(clear =rospy.get_param('/controller/taigoMBclear'))
         self.env = Environment(self.env_name,n_agents=self.n_agents,
+                               rate=rate,
                                delta_coll= rospy.get_param('/controller/delta_coll'),
                                theta_coll = rospy.get_param('/controller/theta_coll'),
                                delta_goal= rospy.get_param('/training/delta_goal'),
@@ -98,7 +99,7 @@ class Controller():
 
 
     def main(self):
-
+        self.start_time = rospy.get_time()
         if not self.model2load =="":
             self.agent.load_weights(self.model_dir)
             self.random_warmup = False
@@ -119,13 +120,13 @@ class Controller():
         rospy.Subscriber('robot_bumper',ContactsState,self.env.callback_collision)
         rospy.Subscriber('gazebo/model_states',ModelStates,self.env.callback_robot_state)
         rospy.Subscriber('scan_raw',LaserScan,self.env.callback_scan)
-        rospy.Subscriber('usr_cmd_vel',Twist,self.calback)
+        rospy.Subscriber('usr_cmd_vel',Twist,self.callback)
 
         rospy.on_shutdown(self.shutdownhook)
 
         #print(f'\n---- EPOCH {self.epoch} -------------------------')
         #print(f"GOAL:'{self.env.goal_id}' -> {self.env.goal_pos}\n.\n.\n.\n.")
-        #self.time=self.start_time
+        self.time=self.start_time
         rospy.spin()
 
     
@@ -143,11 +144,7 @@ class Controller():
             self.agent.is_training = True
             self.control_train(usr_cmd)
 
-        elif self.mode=='eval':
-            self.agent.is_training = False
-            self.control_eval(usr_cmd)
-
-        elif self.mode =='test':
+        elif self.mode=='eval' or self.mode =='test':
             self.agent.is_training = False
             self.control_test(usr_cmd)
 
@@ -157,39 +154,22 @@ class Controller():
 
 
     def control_classic(self,usr_cmd):
+        dt = self.get_time()
         _,_,done = self.env.make_step()
+        if done:
+            self.reset()
+            print('-'*20+'\n.\n.\n.\n.\n.')
 
         ca_cmd = np.array(self.ca_controller.get_cmd(self.env.cls_obstacle)) 
-        
+        primitives = {1:(1.0,'U'),2:(0.75,'CA'),3:(0.5,'CA'),4:(0.25,'CA'),5:(0.0,'CA')}
         danger,dist = self.env.danger()
-        t=rospy.get_time()-self.start_time
-        dt = round(t - self.time,3)
-        self.time = t
-
-        if danger==1:
-            alpha = 1.0
-            tag = '(U)'
-        elif danger==2:
-            alpha = 0.75
-            tag = '(CA)'
-        elif danger==3:
-            alpha = 0.5
-            tag = '(CA)'
-        elif danger==4:
-            alpha = 0.25
-            tag = '(CA)'
-        else:
-            alpha = 0.0 
-            tag = '(CA)'
+        
+        alpha,tag = primitives[danger]
+        alpha = 1.0
         header = 'STEP ' + str(self.env.step) +' - ' + tag
-        print('-')
-        print('danger: ',danger)
-        print('dist: ',dist)
-        print('U: ',usr_cmd)
-        print('CA: ',ca_cmd)
 
         if not (self.env.is_goal or self.env.is_coll):
-            write_console(header,alpha,usr_cmd[0],danger,dt)
+            write_console(header,alpha, 0 ,danger,'-',dt)
 
         cmd = alpha*usr_cmd + (1-alpha)*ca_cmd        
         msg = cmd_to_twist(cmd)
@@ -198,48 +178,34 @@ class Controller():
         t=rospy.get_time()-self.start_time
         self.time = t
 
-        if done:
-            self.reset()
+
 
         self.rate.sleep()
 
 
 
 
-    def control_train(self,data):
-
-        #get results from the previous action and let the agent observe
-        observation,reward,done = self.env.make_step()
-
+    def control_train(self,usr_cmd):
         is_warmup = self.step_warmap <= self.hyperParam.warmup
-        if self.mode == 'train' and not is_warmup:
+        dt = self.get_time()
+
+        self.env.pause()
+        #assemble and observe the current state
+        observation,reward,done = self.env.make_step()
+        ca_cmd = np.array(self.ca_controller.get_cmd(self.env.cls_obstacle))
+        state_vars = np.hstack([usr_cmd,ca_cmd,self.prev_alpha, self.env.robot.mb_v,self.env.robot.mb_om])
+        state = [observation,state_vars]
+        self.agent.observe(reward, state, done, save=self.to_observe)
+
+        if not is_warmup:
             self.agent.update_policy()
         
         self.episode_reward += reward
 
         if done: self.done_routine()
 
-        #NEW EPISODE
-        #----------------------------------------------------------
-        
-        #update time
-        dt = self.get_time()
-        usr_cmd = np.array(twist_to_cmd(data))
-        
-
-        #get commands
-        ca_cmd = np.array(self.ca_controller.get_cmd(self.env.cls_obstacle))
-        #ts_cmd = self.ts_controller.get_cmd(self.env.time)
-        state_vars = np.hstack([usr_cmd,ca_cmd,self.prev_alpha, self.env.robot.mb_v,self.env.robot.mb_om])
-
-        #assemble and observe the last episode data
-        state = [observation,state_vars]
-
-        self.agent.observe(reward,state, done,save=self.to_observe)
-
-        
-        # get alpha from the DDPG    ==> as compute action
-        if self.mode == 'train' and is_warmup:
+        #get the new action
+        if is_warmup:
             self.step_warmap+=1
             alpha,a_opt = self.agent.select_action(state)
             if self.random_warmup:
@@ -248,41 +214,65 @@ class Controller():
             else:
                 header = 'WARMUP (true) - ' + str(self.step_warmap) 
         else:
-            #print('\n ACT')
             alpha,a_opt = self.agent.select_action(state)
             tag='(' + self.mode + ')'
             header = 'STEP ' + str(self.env.step) +' - ' + tag
 
         danger,dist = self.env.danger()
-        #if danger>=3: self.to_observe = True
-        #else: self.to_observe = random.getrandbits(1)
-
+        if danger==5: alpha =0.0
+        
         if not (self.env.is_goal or self.env.is_coll):
             write_console(header,alpha,a_opt,danger,self.agent.lr_scheduler.get_last_lr(),dt)
+        
         # blend commands and send the msg to the robot
         cmd= usr_cmd * alpha + ca_cmd * (1-alpha)
-    
         msg = cmd_to_twist(cmd)
-        
-        self.pub.publish(msg)
-    
 
-        #save all stuff for the second part of the step
-        self.prev_alpha=alpha
-        self.prev_observation=observation
+        self.env.unpause()
+        self.pub.publish(msg)
 
         # store actions & plots
-        self.ts_controller.store_action(self.time,cmd)
         self.env.update_act(alpha,usr_cmd,cmd)
         self.plot.store_act(self.time,usr_cmd,ca_cmd,[0,0],alpha,cmd)
         self.plot.obs_poses[self.env.step]=self.env.pointCloud
         self.plot.ranges[self.env.step]=observation
 
-        if self.verbose:
-            self.display_commands_SC(alpha,usr_cmd,ca_cmd,[0,0],cmd)
-        
-     
         self.rate.sleep()
+
+
+
+    def control_test(self,usr_cmd):
+        dt = self.get_time()
+
+        #assemble and observe the current state
+        observation,_,done = self.env.make_step()
+        ca_cmd = np.array(self.ca_controller.get_cmd(self.env.cls_obstacle))
+        state_vars = np.hstack([usr_cmd,ca_cmd,self.prev_alpha, self.env.robot.mb_v,self.env.robot.mb_om])
+        state = [observation,state_vars]
+
+        if done: self.done_routine()
+
+        #get the new action
+        alpha,a_opt = self.agent.select_action(state)
+        tag='(' + self.mode + ')'
+        header = 'STEP ' + str(self.env.step) +' - ' + tag
+        danger,dist = self.env.danger()
+        if danger==5: alpha =0.0
+
+        if not (self.env.is_goal or self.env.is_coll):
+            write_console(header,alpha,a_opt,danger,self.agent.lr_scheduler.get_last_lr(),dt)
+        
+        # blend commands and send the msg to the robot
+        cmd= usr_cmd * alpha + ca_cmd * (1-alpha)
+        msg = cmd_to_twist(cmd)
+        self.pub.publish(msg)
+
+        # store actions 
+        self.env.update_act(alpha,usr_cmd,cmd)
+
+        self.rate.sleep()
+
+
 
     def get_folder(self,name):
         parent_dir = os.path.join(rospy.get_param('/training/parent_dir'),name)
@@ -326,27 +316,23 @@ class Controller():
         dt = round(t - self.time,3)
         self.time = t
         return dt
+    
+
 
     def done_routine(self):
+
         self.env.pause()
                   
-        if self.agent.name == 'ddqn':
-            mean_loss = self.agent.episode_loss/self.env.step
-            self.mean_episode_losses.append(mean_loss)
-            self.report_DDQN()
-        else:
-            mean_val_loss = self.agent.episode_value_loss/self.env.step
-            mean_policy_loss = self.agent.episode_policy_loss/self.env.step
-            self.mean_episode_losses.append([mean_val_loss,mean_policy_loss])
-            self.report_DDPG()
-
-
-        
+        mean_loss = self.agent.episode_loss/self.env.step
+        self.mean_episode_losses.append(mean_loss)
+        self.report()
+    
         if self.mode=='train':
             epoch = self.epoch
             self.epoch+=1
             is_warmup = self.step_warmap <= self.hyperParam.warmup
-            if mean_loss>0.001: 
+
+            if mean_loss>0.001: #not evaluating
                 self.train_plot.store_train(self.epoch,self.episode_reward,mean_loss)
                 self.train_plot.save_dict()
                 if mean_loss<=min(self.train_plot.mean_loss):
@@ -356,8 +342,10 @@ class Controller():
                 self.pub_goal.publish('END')
                 rospy.signal_shutdown('Terminate training')
                 tag = 'END'
+
             elif is_warmup:                     #still  WARMUP
-                tag = '(train) EPOCH '+str(self.epoch)
+                tag = '(warm) EPOCH '+str(self.epoch)
+
             else:
                 self.plot.save_dict()
                 self.agent.update_hp()
@@ -365,7 +353,6 @@ class Controller():
                 if epoch%5==0:
                     self.mode='eval'
                     self.eval_lev=0
-                    self.agent.is_training = False
                     tag = 'EVALUATION 0'
                 else:
                     tag = '(train) EPOCH '+str(self.epoch)
@@ -401,21 +388,9 @@ class Controller():
         print(f"GOAL:'{self.env.goal_id}' -> {self.env.goal_pos}\n.\n.\n.\n.\n")
     
 
-    def report_DDPG(self):
-        print('\n---')
-        print(' - mode: ',self.mode)
-        #print(' - goal: ',self.env.goal_id)
-        print(' - steps: ',self.env.step)
-        if self.mode == 'train':
-            print(' - sigma: ',self.agent.sigma_w)
-            print(f' - mem. capacity: {self.agent.memory.actions.get_capacity()}%')
-            print(' - episode reward: ',self.episode_reward)
-            print(' - mean episode val. loss: ',self.mean_episode_losses[-1][0])
-            print(' - mean episode pol. loss: ',self.mean_episode_losses[-1][1])
-        print('---\n')
 
     
-    def report_DDQN(self):
+    def report(self):
         print('\n---')
         print(' - mode: ',self.mode)
         #print(' - goal: ',self.env.goal_id)

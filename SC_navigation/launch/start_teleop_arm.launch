@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<launch>
+    <rosparam command="load" file="$(find SC_navigation)/config/navigation_params.yaml" />
+
+    <arg name= "mode" default="classic"/> 
+    <arg name= "model" default=""/> 
+
+    <!-- Launch the training system -->
+    <node pkg="key_teleop" name="user" type="key_teleop_arm.py" output="screen"/>
+    
+    <node pkg="SC_navigation" name="controller" type="controller.py">
+        <param name="mode" type="string" value="$(arg mode)" />
+        <param name="model" type="string" value="$(arg model)"/>
+    </node>
+
+</launch>

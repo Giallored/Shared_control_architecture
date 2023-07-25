@@ -65,7 +65,10 @@ class Prioritized_ERB:
                 self.p_max = max(self.data_buffer.items(), key=operator.itemgetter(1)).priority
             
             if old_item.weight == self.w_max:
-                self.data_buffer[index].weight = 0
+                try:
+                    self.data_buffer[index].weight = 0
+                except:
+                    pass
                 self.w_max = max(self.data_buffer.items(), key=operator.itemgetter(2)).weight
         
         # new samples are instantiated with max priority and weight (since are totatlly new experience)

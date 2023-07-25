@@ -17,9 +17,12 @@ class User():
     def __init__(self,discrete = False,rate=5):
         rate = rospy.get_param('/controller/usr_rate') 
         self.tiago=TIAgo()
+       
         self.pub = rospy.Publisher('usr_cmd_vel', Twist, queue_size=1)
         self.goal_id='tiago'
         self.discrete = discrete
+        self.time = rospy.get_time()
+        self.cnt=0
         
         #self.pub = rospy.Publisher('usr_cmd_vel', Float64MultiArray, queue_size=1)
         
@@ -28,8 +31,9 @@ class User():
         self.primitive_om = 1.0
         self.stop_cmd = cmd_to_twist([0.0,0.0])
 
-
-        self.max_v = 0.8
+        
+        #paramss
+        self.max_v = 0.8    
         self.min_v = -0.8
         self.max_om = 1.0
         self.min_om = -1.0
@@ -43,11 +47,19 @@ class User():
        
         #self.vel_cmd = Twist()
         self.rate=rospy.Rate(rate) # 10hz
+        self.delta_t = 1/rate
         
         model_msg = rospy.wait_for_message('gazebo/model_states', ModelStates, timeout=None)
         self.update(model_msg)
 
-        
+        self.setup()
+
+    
+    def setup(self):
+        model_msg = rospy.wait_for_message('gazebo/model_states', ModelStates, timeout=None)
+        self.obj_dict,vel = get_sim_info(model_msg)
+        self.goal_pos = self.obj_dict[self.goal_id].position
+        self.tiago.set_MBpose(self.obj_dict['tiago'],vel)  
 
     def main(self):
         print('User node is ready!')
@@ -118,9 +130,13 @@ class User():
 
     
     def update(self,model_msg):
-        self.obj_dict,vel = get_sim_info(model_msg)
-        self.goal_pos = [6.0,0.0,0.01] #self.obj_dict[self.goal_id].position
-        self.tiago.set_MBpose(self.obj_dict['tiago'],vel)  
+        
+        self.cnt+=1
+        if self.cnt==10:
+            self.cnt=0
+            self.obj_dict,vel = get_sim_info(model_msg)
+            self.goal_pos = self.obj_dict[self.goal_id].position #[6.0,0.0,0.01] 
+            self.tiago.set_MBpose(self.obj_dict['tiago'],vel)  
 
     def set_goal(self,data):
         if data.data == 'END':

@@ -14,6 +14,7 @@ class Environment():
     def __init__(self,
                  name:str,
                  robot,
+                 rate=10,
                  n_agents=3,
                  n_obstacles=3,
                  delta_goal=1,
@@ -22,7 +23,9 @@ class Environment():
                  max_steps=100,
                  verbosity=False
                  ):
+        
         self.name=name
+        self.rate=rate
         self.n_agents=n_agents
         self.max_steps=max_steps
         self.verbosity=verbosity
@@ -32,6 +35,8 @@ class Environment():
         self.unpause_sim = rospy.ServiceProxy('/gazebo/unpause_physics', Empty)
         self.is_running=True
         self.step = 0
+        self.cnt=0
+        self.time = rospy.get_time()
         self.laserScanner = LaserScanner()
         self.robot = robot
         self.is_coll=False
@@ -176,8 +181,9 @@ class Environment():
         self.cur_cmd = np.array(cmd)
 
     def callback_robot_state(self,msg):
-        t = rospy.get_time()
-        if t%0.1==0:
+        self.cnt+=1
+        if self.cnt==10:
+            self.cnt=0
             self.obj_dict,tiago_vel = get_sim_info(msg)
             self.goal_pos = self.obj_dict[self.goal_id].position
             self.robot.set_MBpose(self.obj_dict['tiago'],tiago_vel)   
@@ -256,61 +262,57 @@ class Environment():
 
 
     def change_obj_pose(self,eval):
-        #for 5 obstacle
-        r = 3
+        
+        r = 4.0
         if not r%2==0:
             r_=r+1
         else:
             r_=r
-        l = self.obs_ids 
-        n = len(l)
         h=0.3
-        #if self.step%50==0 and self.formation_r>=4.0:
-        #    self.formation_r-=0.5
-
-        #change obstacles position
-        #ax = np.linspace(-r,r,int(2*r)+1)
-
-        # for 10 obstacles
-        #ax_x = np.linspace(2,2*r,int(2*r)+1)
-        #ax_y = np.linspace(-r,r,int(2*r))
-
-       
-        #if r%1==0.0: grid.remove([0.0,0.0])
+        
         if not eval == None:
             if  self.n_obstacles ==5:
                 if eval == 0:
                     new_poses = [[1.0,1.0],[1.0,-1.0],[2.0,0.0],[3.0,-1.0],[3.5,1.0]]
-                else:
-                    [[1.0,0.1],[1.0,-0.75],[2.0,0.0],[3.0,0.75],[3.5,-0.75]]
+                elif eval ==1:
+                    new_poses = [[1.0,0.1],[1.0,-0.75],[2.0,0.0],[3.0,0.75],[3.5,-0.75]]
+                    
             elif self.n_obstacles ==3:
                 if eval == 0:
                     new_poses = [[2.0,0.1],[3.0,0.0],[4.0,-1.0]]
-                else:
+                elif eval ==1:
                     new_poses = [[4.0,0.1],[3.0,0.0],[2.0,-1.0]]
-            
-            
-            
-            
             self.goal_pos = [r_+1,0.0,h]
+
         else:
-            #for 5 obstacle
-            #ax_x = np.linspace(1,r+1,int(r)+1)
-            #ax_y = np.linspace(-r_/2,r_/2,int(r_)+1)
-            #grid = [[x,y] for x in ax_x for y in ax_y]
-            #new_poses = random.sample(grid, n)
-            #self.goal_pos =random.sample([[r_+1,y,0.01] for y in ax_y],1)[0]
+            if self.n_obstacles ==3:
+                y = np.random.uniform(low=-1.0, high=1.0, size=3)
+                new_poses = [[2.0,y[0]],[3.0,y[1]],[4.0,y[2]]]
+                self.goal_pos = [6.0,0.0,h]
+                new_poses.append(self.goal_pos)
 
-            #for 3 obstacle
-            y = np.random.uniform(low=-1.0, high=1.0, size=3)
-            new_poses = [[2.0,y[0]],[3.0,y[1]],[4.0,y[2]]]
-            self.goal_pos = [6.0,0.0,h]
+            elif self.n_obstacles ==5:
+                ax_x = np.linspace(2,4,3)
+                ax_y = np.linspace(-3,3,5)
+                grid = [[x,y] for x in ax_x for y in ax_y]
+                new_poses = random.sample(grid, 5)
+                self.goal_pos = [6.0,0.0,h]
+                new_poses.append(self.goal_pos)
 
-        for i in range(n):
-            obj_id =l[i]
+            else:   #for n obstacle
+                ax = np.linspace(-r,r,int(2*r)+1)
+                grid = [[x,y] for x in ax for y in ax]
+                grid.remove([0.0,0.0])
+                new_poses = random.sample(grid, self.n_obstacles+1)
+                self.goal_pos =new_poses[-1]
+            
+        ids = self.obs_ids + [self.goal_id]
+
+
+        for i in range(len(ids)):
+            obj_id =ids[i]
             state_msg = ModelState()
             new_pos = new_poses[i]
-            
 
             state_msg.model_name = obj_id
             state_msg.pose.position.x = new_pos[0]
@@ -319,13 +321,13 @@ class Environment():
             send_state_msg(state_msg)
             
 
-        #change goal position
-        state_msg = ModelState()
-        state_msg.model_name = self.goal_id
-        state_msg.pose.position.x = self.goal_pos[0]
-        state_msg.pose.position.y = self.goal_pos[1]
-        state_msg.pose.position.z = h
-        send_state_msg(state_msg)
+        ##change goal position
+        #state_msg = ModelState()
+        #state_msg.model_name = self.goal_id
+        #state_msg.pose.position.x = self.goal_pos[0]
+        #state_msg.pose.position.y = self.goal_pos[1]
+        #state_msg.pose.position.z = h
+        #send_state_msg(state_msg)
 
 
  
