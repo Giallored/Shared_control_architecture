@@ -6,7 +6,7 @@ import torch
 import torch.nn as nn
 from torch.optim import Adam
 from collections import deque
-from RL_agent.model import Qnet,Qnet_new,DwelingQnet
+from RL_agent.model import DwelingQnet
 from RL_agent.ERB import Prioritized_ERB
 from RL_agent.utils import *
 from copy import deepcopy
@@ -18,11 +18,11 @@ from statistics import mean
 
 
 class DDQN(object):
-    def __init__(self, n_states, n_frames, n_actions, args):
+    def __init__(self, n_states, n_frames, action_space, args):
         self.name = 'ddqn'
         self.n_states = n_states
-        self.n_actions= n_actions
-        self.action_space = list(np.linspace(0,1,n_actions))
+        self.n_actions= len(action_space)
+        self.action_space = action_space
         self.n_frames = n_frames
         self.lr = args.rate
         
@@ -71,7 +71,7 @@ class DDQN(object):
         self.max_iter = args.max_train_iter
 
         #initializations
-        self.a_t = 1.0 # Most recent action
+        self.a_t = (1.0,0.0,0.0) # Most recent action
         self.episode_loss=0.
         
 
@@ -99,7 +99,7 @@ class DDQN(object):
     
 
     def random_action(self):
-        action = np.random.choice(self.action_space)
+        action = random.sample(self.action_space,1)[0] #np.random.choice(self.action_space)
         self.a_t = action
         return action
     
@@ -211,7 +211,8 @@ class DDQN(object):
             next_state = [np.array(self.observations),self.sVars]
 
             if save: 
-                self.buffer.store(state=state, action=self.action_space.index(self.a_t),
+                a = tuple(self.a_t)
+                self.buffer.store(state=state, action=self.action_space.index(a),
                               reward=r_t,done=t_t, next_state=next_state )
             
 

@@ -161,7 +161,8 @@ include_directories(
 catkin_install_python(PROGRAMS
   src/scripts/user_AI.py
   src/scripts/user_random.py
-  src/scripts/user_teleop.py
+  src/scripts/user_teleop_arm.py
+  src/scripts/user_teleop_base.py
   DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION}
 )
 

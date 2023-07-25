@@ -227,17 +227,10 @@ class DwelingQnet(nn.Module):
         return qvals
 
 
-
-
-
-
-
-
-
-class Qnet_new(nn.Module):
+class Qnet_sparse(nn.Module):
 
     def __init__(self, n_states, n_frames, n_actions,hidden1,hidden2):
-        super(Qnet_new, self).__init__()
+        super(Qnet_sparse, self).__init__()
         self.SparseLayer1 = SparseConv(1, 16, 11)
         self.SparseLayer2 = SparseConv(16, 16, 7)
         self.SparseLayer3 = SparseConv(16, 16, 5)

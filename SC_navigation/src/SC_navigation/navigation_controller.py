@@ -17,12 +17,9 @@ from SC_navigation.trajectory_smoother import Trajectory_smooter
 import laser_geometry.laser_geometry as lg
 from SC_navigation.environment import Environment
 from SC_navigation.utils import *
-from RL_agent.ddpg import DDPG
 from RL_agent.ddqn import DDQN
 
-from RL_agent.utils import HyperParams
-from sensor_msgs.msg import PointCloud2,LaserScan
-from copy import deepcopy
+from sensor_msgs.msg import LaserScan
 
 
 
@@ -35,7 +32,7 @@ class Controller():
         self.rate=rospy.Rate(rate) # 10hz        
         self.verbose=verbose
         
-        self.n_agents=2
+        self.n_agents=3
         self.n_acts = 2
 
         # folders
@@ -45,13 +42,17 @@ class Controller():
         self.model_dir = self.get_folder(self.output_folder)
         self.plot_dir = self.get_folder(self.plot_folder)
 
-        #training stuff
-        
+
+        #initializations
+        self.epoch=0
         self.hyperParam = train_param
-        self.prev_alpha=[1.0]
+        self.prev_alpha=[1.0,0.0,1.0]
         self.prev_usr_cmd= [0.,0.]
         self.prev_cmd = [0.,0.]
-        self.epoch=0
+        self.n_state = self.n_agents*self.n_acts + 1 + 2  #usr_cmd + ca_cmd + prev_alpha + cur_vel
+        self.cur_cmds=[0.0]*self.n_acts*self.n_agents
+
+        #training stuff
         self.episode_reward = 0.0
         self.mean_episode_rewards=[]
         self.mean_episode_losses=[]
@@ -63,10 +64,7 @@ class Controller():
         self.to_observe = True
         
 
-        #initializations
-        self.n_state = self.n_agents*self.n_acts + 1 + 2  #usr_cmd + ca_cmd + prev_alpha + cur_vel
-        self.cur_cmds=[0.0]*self.n_acts*self.n_agents
-
+        #instatiations
         self.ca_controller = Collision_avoider(
             delta=rospy.get_param('/controller/delta_coll'),
             K_lin=rospy.get_param('/controller/K_lin'),
@@ -84,8 +82,10 @@ class Controller():
                                robot = self.tiago)
         
         #self.agent = DDPG(self.n_state,self.hyperParam.n_frame,1,self.hyperParam)
-        self.agent = DDQN(self.n_state,self.hyperParam.n_frame,5,self.hyperParam)
+        vals = np.linspace(0.0,1.0,5)
         
+        primitives = [(x,y,z) for x in vals for y in vals for z in vals if sum((x,y,z))==1.0]
+        self.agent = DDQN(self.n_state,self.hyperParam.n_frame,primitives,self.hyperParam)
         self.pub=rospy.Publisher('mobile_base_controller/cmd_vel', Twist, queue_size=1)
         self.pub_goal=rospy.Publisher('goal',String,queue_size=1)
 
@@ -160,25 +160,27 @@ class Controller():
             self.reset()
             print('-'*20+'\n.\n.\n.\n.\n.')
 
-        ca_cmd = np.array(self.ca_controller.get_cmd(self.env.cls_obstacle)) 
-        primitives = {1:(1.0,'U'),2:(0.75,'CA'),3:(0.5,'CA'),4:(0.25,'CA'),5:(0.0,'CA')}
+        ca_cmd = self.ca_controller.get_cmd(self.env.cls_obstacle)
+        ts_cmd = self.ts_controller.get_cmd(self.time)
+
+        cmds = [usr_cmd,ca_cmd,ts_cmd]
+
+        primitives = {1:((1.0,0.0,0.0),'U'),
+                      2:((0.75,0.25,0.0),'CA'),
+                      3:((0.5,0.5,0.0),'CA'),
+                      4:((0.25,0.75,0.0),'CA'),
+                      5:((0.0,1.0,0.0),'CA')}
         danger,dist = self.env.danger()
         
         alpha,tag = primitives[danger]
-        alpha = 1.0
         header = 'STEP ' + str(self.env.step) +' - ' + tag
 
         if not (self.env.is_goal or self.env.is_coll):
-            write_console(header,alpha, 0 ,danger,'-',dt)
-
-        cmd = alpha*usr_cmd + (1-alpha)*ca_cmd        
+            write_console(header,alpha, alpha ,danger,'-',dt)
+        
+        cmd = np.sum(np.array(alpha)*np.transpose(cmds),axis=-1)
         msg = cmd_to_twist(cmd)
         self.pub.publish(msg)
-        
-        t=rospy.get_time()-self.start_time
-        self.time = t
-
-
 
         self.rate.sleep()
 
@@ -192,7 +194,10 @@ class Controller():
         self.env.pause()
         #assemble and observe the current state
         observation,reward,done = self.env.make_step()
-        ca_cmd = np.array(self.ca_controller.get_cmd(self.env.cls_obstacle))
+        ca_cmd = self.ca_controller.get_cmd(self.env.cls_obstacle)
+        ts_cmd = self.ts_controller.get_cmd(self.time)
+        cmds = [usr_cmd,ca_cmd,ts_cmd]
+
         state_vars = np.hstack([usr_cmd,ca_cmd,self.prev_alpha, self.env.robot.mb_v,self.env.robot.mb_om])
         state = [observation,state_vars]
         self.agent.observe(reward, state, done, save=self.to_observe)
@@ -219,13 +224,13 @@ class Controller():
             header = 'STEP ' + str(self.env.step) +' - ' + tag
 
         danger,dist = self.env.danger()
-        if danger==5: alpha =0.0
-        
+        if danger==5: alpha =(0.0,1.0,0.0)
+
         if not (self.env.is_goal or self.env.is_coll):
             write_console(header,alpha,a_opt,danger,self.agent.lr_scheduler.get_last_lr(),dt)
         
         # blend commands and send the msg to the robot
-        cmd= usr_cmd * alpha + ca_cmd * (1-alpha)
+        cmd = np.sum(np.array(alpha)*np.transpose(cmds),axis=-1)
         msg = cmd_to_twist(cmd)
 
         self.env.unpause()
@@ -247,6 +252,8 @@ class Controller():
         #assemble and observe the current state
         observation,_,done = self.env.make_step()
         ca_cmd = np.array(self.ca_controller.get_cmd(self.env.cls_obstacle))
+        ts_cmd = self.ts_controller.get_cmd(self.time)
+        cmds = [usr_cmd,ca_cmd,ts_cmd]
         state_vars = np.hstack([usr_cmd,ca_cmd,self.prev_alpha, self.env.robot.mb_v,self.env.robot.mb_om])
         state = [observation,state_vars]
 
@@ -257,13 +264,13 @@ class Controller():
         tag='(' + self.mode + ')'
         header = 'STEP ' + str(self.env.step) +' - ' + tag
         danger,dist = self.env.danger()
-        if danger==5: alpha =0.0
+        if danger==5: alpha =(0.0,1.0,0.0)
 
         if not (self.env.is_goal or self.env.is_coll):
             write_console(header,alpha,a_opt,danger,self.agent.lr_scheduler.get_last_lr(),dt)
         
         # blend commands and send the msg to the robot
-        cmd= usr_cmd * alpha + ca_cmd * (1-alpha)
+        cmd = np.sum(np.array(alpha)*np.transpose(cmds),axis=-1)
         msg = cmd_to_twist(cmd)
         self.pub.publish(msg)
 
@@ -296,7 +303,7 @@ class Controller():
 
     def reset(self):
         self.env.reset(self.eval_lev)
-        self.agent.reset(self.env.observation,np.array([0.0,0.0,0.0,0.0,1.0,0.0,0.0]),1.0)
+        self.agent.reset(self.env.observation,np.zeros(self.n_state),(1.0,0,0))
         self.ts_controller.reset()
         self.pub_goal.publish(String(self.env.goal_id))
         self.episode_reward = 0.

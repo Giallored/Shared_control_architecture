@@ -31,9 +31,9 @@ training: #namespace
 rewards:
     R_safe: 0 #
     R_col: -100
-    R_goal: 0 #-1 #-100
+    R_goal: -1 #-100
     R_end: 0 #100
-    R_alpha: 0 # -1 #1 #5 #
+    R_alpha: -1 #1 #5 #
     R_cmd: -1 #-1 #-100
   
 

@@ -7,7 +7,7 @@
     <arg name= "model" default=""/> 
 
     <!-- Launch the training system -->
-    <node pkg="key_teleop" name="user" type="key_teleop.py" output="screen"/>
+    <node pkg="user_pkg" name="user" type="key_teleop_base.py" output="screen"/>
     
     <node pkg="SC_navigation" name="controller" type="controller.py">
         <param name="mode" type="string" value="$(arg mode)" />

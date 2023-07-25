@@ -272,8 +272,8 @@ def clamp_angle(theta):
 
 def write_console(header,alpha,a_opt,danger,lr,dt):
     l = [header,
-        ' - Alpha = ' + str(round(alpha,1)),
-        ' - Alpha_opt = ' + str(round(a_opt,1)),
+        ' - Alpha = ' + str(alpha),
+        ' - Alpha_opt = ' + str(a_opt),
         ' - Danger lev = ' + str(danger),
         ' - laerning rate = ' + str(lr),
         ' - dt = ' + str(dt)]

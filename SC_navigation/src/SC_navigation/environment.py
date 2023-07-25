@@ -54,8 +54,8 @@ class Environment():
         self.stacked_steps = 0
         self.stacked_th = 5
 
-        self.prev_act=1.0
-        self.cur_act = 1.0
+        self.cur_act = [1.0,0.0,0.0]
+        self.prev_act=self.cur_act
         self.cur_usr_cmd=[0.,0.]
         self.cur_cmd = np.array([0.,0.])
         self.R_safe = rospy.get_param('/rewards/R_safe')  # coeff penalizing sloseness to obstacles
@@ -219,15 +219,15 @@ class Environment():
         # arbitration oriented
         danger,_ = self.danger()
 
-        if danger==1 and not self.cur_act:
+        if danger==1 and self.cur_act[1]==0.0:
             r_alpha = self.R_alpha
-        elif danger==2 and self.cur_act>0.75+0.01:
+        elif danger==2 and self.cur_act[1]==0.25:
             r_alpha = self.R_alpha
-        elif danger==3 and self.cur_act>0.5+0.01:
+        elif danger==3 and self.cur_act[1]== 0.5:
             r_alpha = self.R_alpha
-        elif danger==4 and self.cur_act>0.25+0.01:
+        elif danger==4 and self.cur_act[1] == 0.75:
             r_alpha = self.R_alpha
-        elif danger==4 and self.cur_act>0.01:
+        elif danger==4 and self.cur_act[1] == 1.0:
             r_alpha = self.R_alpha
         else:
             r_alpha = 0
