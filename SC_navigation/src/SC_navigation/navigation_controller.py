@@ -260,14 +260,14 @@ class Controller():
         if done: self.done_routine()
 
         #get the new action
-        alpha,a_opt = self.agent.select_action(state)
+        _,alpha = self.agent.select_action(state)
         tag='(' + self.mode + ')'
         header = 'STEP ' + str(self.env.step) +' - ' + tag
         danger,dist = self.env.danger()
         if danger==5: alpha =(0.0,1.0,0.0)
 
         if not (self.env.is_goal or self.env.is_coll):
-            write_console(header,alpha,a_opt,danger,self.agent.lr_scheduler.get_last_lr(),dt)
+            write_console(header,alpha,alpha,danger,self.agent.lr_scheduler.get_last_lr(),dt)
         
         # blend commands and send the msg to the robot
         cmd = np.sum(np.array(alpha)*np.transpose(cmds),axis=-1)

@@ -283,6 +283,8 @@ class Environment():
                 elif eval ==1:
                     new_poses = [[4.0,0.1],[3.0,0.0],[2.0,-1.0]]
             self.goal_pos = [r_+1,0.0,h]
+            new_poses.append(self.goal_pos)
+
 
         else:
             if self.n_obstacles ==3:
