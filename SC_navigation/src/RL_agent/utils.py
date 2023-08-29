@@ -6,28 +6,13 @@ from torch.autograd import Variable
 #USE_CUDA = False#torch.cuda.is_available()
 #FLOAT = torch.cuda.FloatTensor if USE_CUDA else torch.FloatTensor
 
-def prRed(prt): print("\033[91m {}\033[00m" .format(prt))
-def prGreen(prt): print("\033[92m {}\033[00m" .format(prt))
-def prYellow(prt): print("\033[93m {}\033[00m" .format(prt))
-def prLightPurple(prt): print("\033[94m {}\033[00m" .format(prt))
-def prPurple(prt): print("\033[95m {}\033[00m" .format(prt))
-def prCyan(prt): print("\033[96m {}\033[00m" .format(prt))
-def prLightGray(prt): print("\033[97m {}\033[00m" .format(prt))
-def prBlack(prt): print("\033[98m {}\033[00m" .format(prt))
-
 def to_numpy(var,use_cuda = False):
     return var.cpu().data.numpy() if use_cuda else var.data.numpy()
 
 def to_tensor(array, use_cuda = False,volatile=False, requires_grad=False):
     dtype = torch.cuda.FloatTensor if use_cuda else torch.FloatTensor
-        #print('before ndarray is dtype:',ndarray.dtype)
-    #ndarray=ndarray.astype('float64')
-    #print('after ndarray is dtype:',ndarray.dtype)
-    
     out = Variable(torch.from_numpy(array), volatile=volatile, requires_grad=requires_grad).type(dtype)
     return out
-    
-    
     
 
 def soft_update(target, source, tau):

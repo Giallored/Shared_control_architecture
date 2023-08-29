@@ -26,7 +26,7 @@ training: #namespace
     max_epochs: 500
     seed: -1
     delta_goal: 1.0
-    n_frame: 3
+    n_frame: 5
 
 rewards:
     R_safe: 0 #

@@ -71,7 +71,7 @@ class Environment():
         # read a scan and get all points to compute the current observations
         scan_msg = rospy.wait_for_message('scan_raw', LaserScan, timeout=None)
         self.callback_scan(scan_msg)
-        self.n_observations = len(self.observation)
+        self.n_observations = int(len(self.observation)/2)
 
         # read a model state and get the state of the simulation
         model_msg = rospy.wait_for_message('gazebo/model_states', ModelStates, timeout=None)
@@ -199,9 +199,11 @@ class Environment():
                 self.is_coll=True
                 print(f'\nCollision: {obj_1} - {obj_2}')
 
+
     def callback_scan(self,scan_msg):
         self.laserScanner.scan_msg=scan_msg
-        self.observation,self.pointCloud = self.laserScanner.get_obs_points()
+        ranges,mask,self.pointCloud = self.laserScanner.get_obs_points()
+        self.observation = np.hstack([ranges,mask])
         self.cls_obstacle = get_cls_obstacle(self.pointCloud)
 
 

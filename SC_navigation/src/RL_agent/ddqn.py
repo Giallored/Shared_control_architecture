@@ -6,7 +6,7 @@ import torch
 import torch.nn as nn
 from torch.optim import Adam
 from collections import deque
-from RL_agent.model import DwelingQnet
+from RL_agent.model import DwelingQnet,Qnet_sparse
 from RL_agent.ERB import Prioritized_ERB
 from RL_agent.utils import *
 from copy import deepcopy
@@ -25,15 +25,22 @@ class DDQN(object):
         self.action_space = action_space
         self.n_frames = n_frames
         self.lr = args.rate
+
+        self.use_cuda = torch.cuda.is_available()
+        #self.use_cuda = False
+        if self.use_cuda: 
+            self.cuda()
+            
+    
         
         # Create Actor and Critic Network
         net_cfg = {
             'hidden1':args.hidden1, 
             'hidden2':args.hidden2
                             }
-
+        self.network = Qnet_sparse(self.n_states,self.n_frames, self.n_actions,**net_cfg)
         #self.network = Qnet(self.n_states,self.n_frames, self.n_actions,**net_cfg)
-        self.network = DwelingQnet(self.n_states,self.n_frames, self.n_actions,**net_cfg)
+        #self.network = DwelingQnet(self.n_states,self.n_frames, self.n_actions,**net_cfg)
         self.target_network = deepcopy(self.network)
 
         self.optimizer  = Adam(self.network.parameters(), lr=self.lr)
@@ -75,10 +82,7 @@ class DDQN(object):
         self.episode_loss=0.
         
 
-        #use_cuda = torch.cuda.is_available()
-        self.use_cuda = False
-        if self.use_cuda: self.cuda()
-    
+        
     def update_hp(self):
         if self.epsilon>self.epsilon_min:
             self.epsilon*=self.epsilon_decay
@@ -105,7 +109,8 @@ class DDQN(object):
     
     def select_action(self, s_t):
         obs_t,cmd_t=s_t
-
+        img_t,mask_t = np.dsplit(obs_t,2)
+        print('-----------------------',mask_t.shape)
         #assemble the state
         observation=deepcopy(self.observations)
         observation.append(obs_t)
@@ -133,7 +138,13 @@ class DDQN(object):
         # Sample batch
         obs_b, svar_b, a_batch, r_b, t_b, next_obs_b, next_svar_b, indices, weights = batch
 
-        obs_tsr = to_tensor(obs_b,use_cuda=self.use_cuda)#.reshape(self.batch_size,self.n_frames,-1)
+        img_b,mask_b = np.dsplit(obs_b,2)
+        img_tsr = to_tensor(img_b,use_cuda=self.use_cuda).unsqueeze(1)
+        mask_tsr = to_tensor(mask_b,use_cuda=self.use_cuda).unsqueeze(1)
+
+        print(mask_tsr)
+        input()
+        #obs_tsr = to_tensor(obs_b,use_cuda=self.use_cuda)#.reshape(self.batch_size,self.n_frames,-1)
         svar_tsr = to_tensor(svar_b,use_cuda=self.use_cuda)#.reshape(self.batch_size,-1)
         s_tsr =[obs_tsr,svar_tsr]
 

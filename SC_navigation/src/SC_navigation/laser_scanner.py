@@ -37,9 +37,11 @@ class LaserScanner():
             if np.linalg.norm(point)<=max_dist:
                 points.append(point)
 
-        ranges = self.preproces(msg.ranges,max_dist)
+        #ranges = self.preproces(msg.ranges,max_dist)
+        ranges,mask = self.get_mask(msg.ranges,max_dist)
 
-        return ranges,np.array(points)
+
+        return ranges,mask,np.array(points)
     
     def padding(self,msg):
         n=len(msg.ranges)
@@ -57,6 +59,16 @@ class LaserScanner():
         offset = int((new_ranges.shape[0] - ranges2trim)/2)
         new_ranges = self.trim(new_ranges,offset=offset)
         return new_ranges.tolist()
+    
+    def get_mask(self,ranges,max_dist):
+        mask=[]
+        for r in ranges:
+            if r>max_dist:
+                mask.append(0)
+            else:
+                mask.append(1)
+        return ranges,mask
+
     
     
 

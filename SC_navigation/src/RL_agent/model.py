@@ -231,8 +231,8 @@ class Qnet_sparse(nn.Module):
 
     def __init__(self, n_states, n_frames, n_actions,hidden1,hidden2):
         super(Qnet_sparse, self).__init__()
-        self.SparseLayer1 = SparseConv(1, 16, 11)
-        self.SparseLayer2 = SparseConv(16, 16, 7)
+        #self.SparseLayer1 = SparseConv(1, 16, 11)
+        #self.SparseLayer2 = SparseConv(16, 16, 7)
         self.SparseLayer3 = SparseConv(16, 16, 5)
         self.SparseLayer4 = SparseConv(16, 16, 3)
         self.SparseLayer5 = SparseConv(16, 16, 3)
@@ -244,22 +244,19 @@ class Qnet_sparse(nn.Module):
         self.fc2 = nn.Linear(n_states+hidden1, hidden2)
         self.fc3 = nn.Linear(hidden2, n_actions)
 
-    def forward(self, x):
-        
-        obs,cmd = x
+    def forward(self, obs,mask,cmd):
         n_obs = int(obs.shape[-1]/2)
         print('n_obs: ',n_obs)
         img = obs[:,0,:n_obs].unsqueeze(1)
         mask = obs[:,0,n_obs:].unsqueeze(1)
         bs = cmd.shape[0]
         
-        feat, mask = self.SparseLayer1(img, mask)
-        feat, mask = self.SparseLayer2(feat, mask)
-        feat, mask = self.SparseLayer3(feat, mask)
+        #feat, mask = self.SparseLayer1(img, mask)
+        #feat, mask = self.SparseLayer2(feat, mask)
+        feat, mask = self.SparseLayer3(img, mask)
         feat, mask = self.SparseLayer4(feat, mask)
         feat, mask = self.SparseLayer5(feat, mask)
         feat, mask = self.SparseLayer6(feat, mask)
-        print('feat: ',feat.shape)
         
         feat = self.relu(self.fc1(feat)).reshape(bs,-1)
         feat = self.relu(self.fc2(torch.cat([feat,cmd],-1)))
@@ -277,7 +274,7 @@ class SparseConv(nn.Module):
         super().__init__()
         padding = kernel_size//2
 
-        self.conv = nn.Conv1d(
+        self.conv = nn.Conv2d(
             in_channels,
             out_channels,
             kernel_size=kernel_size,
@@ -288,14 +285,14 @@ class SparseConv(nn.Module):
             torch.zeros(out_channels), 
             requires_grad=True)
 
-        self.sparsity = nn.Conv1d(
+        self.sparsity = nn.Conv2d(
             in_channels,
             out_channels,
             kernel_size=kernel_size,
             padding=padding,
             bias=False)
 
-        kernel = torch.FloatTensor(torch.ones(kernel_size)).unsqueeze(0).unsqueeze(0)
+        kernel = torch.FloatTensor(torch.ones(kernel_size,kernel_size)).unsqueeze(0).unsqueeze(0)
 
         self.sparsity.weight = nn.Parameter(
             data=kernel, 
