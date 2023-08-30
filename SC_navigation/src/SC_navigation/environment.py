@@ -41,11 +41,12 @@ class Environment():
         self.robot = robot
         self.is_coll=False
         self.is_goal=False
-        self.formation_r =3.0
         self.random_warmup=True
+
+        #map stuff
+        self.map_size = [4,3,0.3]
+        self.obs_clear = 1.5
         self.n_obstacles = n_obstacles
-
-
 
         #reward stuff
         self.delta_coll= delta_coll
@@ -54,16 +55,11 @@ class Environment():
         self.stacked_steps = 0
         self.stacked_th = 5
 
-        self.cur_act = [1.0,0.0,0.0]
-        self.prev_act=self.cur_act
-        self.cur_usr_cmd=[0.,0.]
-        self.cur_cmd = np.array([0.,0.])
         self.R_safe = rospy.get_param('/rewards/R_safe')  # coeff penalizing sloseness to obstacles
         self.R_col = rospy.get_param('/rewards/R_col')  # const penalizing collisions
         self.R_goal = rospy.get_param('/rewards/R_goal')  #coeff penalizing the distance from the goal
         self.R_end = rospy.get_param('/rewards/R_end')  # const rewarding the rach of the goal
         self.R_alpha = rospy.get_param('/rewards/R_alpha')  #coeff penalizing if the arbitration changes too fast
-        self.R_cmd = rospy.get_param('/rewards/R_cmd') 
         
         self.setup()
 
@@ -101,6 +97,7 @@ class Environment():
         model_msg = rospy.wait_for_message('gazebo/model_states', ModelStates, timeout=None)
         self.obj_dict,tiago_vels = get_sim_info(model_msg)
         self.robot.set_MBpose(self.obj_dict['tiago'],tiago_vels)
+        self.last_gDist =  np.linalg.norm(np.subtract(self.goal_pos[0:2],self.robot.mb_position[0:2]))
         print('continue...')
         self.step=0
         self.is_coll=False
@@ -116,9 +113,9 @@ class Environment():
         self.unpause_sim()
 
 
-    def make_step(self):
+    def make_step(self,alpha,alphaE=[0,0,0]):
         self.step += 1
-        reward = self.get_reward()
+        reward = self.get_reward(alpha,alphaE)
         #is_goal = self.goal_check() 
         is_stuck = self.stuck_check()
         is_end = (self.step>=self.max_steps)
@@ -144,28 +141,38 @@ class Environment():
         dist = np.linalg.norm(pos)
         theta = np.arctan2(pos[1],pos[0])
         theta_th = np.arcsin(0.35/np.clip(dist,0.35,np.inf))
-
-        if dist<1.5 and dist>=0.5:
-            if abs(theta)<theta_th:
-                danger =3
-            else:
-                danger =2
-        elif dist<0.5:
-            if abs(theta)<theta_th:   #np.arctan2(self.delta_coll,0.2):
-                danger= 5
-            else:
-                danger= 4
-        else:
+        if dist >=1.5:
             danger = 1
+        elif dist >=1.0:
+            danger = 2
+        elif dist >=0.7:
+            danger = 3
+        elif dist <0.7:
+            if abs(theta)>theta_th:
+                danger = 4
+            else:
+                danger = 5 
 
-        return danger,(dist,theta/np.pi*180)
+        #if dist<1.5 and dist>=0.5:
+        #    if abs(theta)<theta_th:
+        #        danger =3
+        #    else:
+        #        danger =2
+        #elif dist<0.5:
+        #    if abs(theta)<theta_th:   #np.arctan2(self.delta_coll,0.2):
+        #        danger= 5
+        #    else:
+        #        danger= 4
+        #else:
+        #    danger = 1
+
+        return danger,dist
 
     def stuck_check(self,stamp=True):
         if self.robot.mb_position == self.robot.prev_mb_position:
             self.stacked_steps += 1
         else:
             self.stacked_steps =0
-
         if self.stacked_steps >= self.stacked_th:
             if stamp:print('\nIs stucked!')
             self.stacked_steps=0
@@ -174,11 +181,6 @@ class Environment():
             return False
     
     # ----------------- UPDATES / CALLBACKS -----------------------------
-    def update_act(self,act,usr_cmd,cmd):
-        self.prev_act=self.cur_act 
-        self.cur_act = act
-        self.cur_usr_cmd=usr_cmd
-        self.cur_cmd = np.array(cmd)
 
     def callback_robot_state(self,msg):
         self.cnt+=1
@@ -192,9 +194,11 @@ class Environment():
         contact=Contact(data)
         obj_1,obj_2=contact.check_contact()
         if not(obj_1==None) and self.is_coll==False and self.is_goal==False:
+            #check for GOAL
             if obj_1==self.goal_id:
                 self.is_goal=True
                 print(f'\nGoal')
+            #check for COLLISIONS
             else:
                 self.is_coll=True
                 print(f'\nCollision: {obj_1} - {obj_2}')
@@ -207,109 +211,73 @@ class Environment():
 
 
 
-    def get_reward(self):
+    def get_reward(self,alpha,alphaE=[0,0,0]):
 
         # safety oriented
+        e = np.linalg.norm(self.cls_obstacle)
+
         if self.is_coll:
             r_safety = self.R_col
+        elif e<1.0:
+            r_safety=self.R_safe/e
         else:
             r_safety=0
         
-        obs_dist = np.linalg.norm(self.cls_obstacle)
         # arbitration oriented
-        danger,_ = self.danger()
-
-        if danger==1 and self.cur_act[1]==0.0:
-            r_alpha = self.R_alpha
-        elif danger==2 and self.cur_act[1]==0.25:
-            r_alpha = self.R_alpha
-        elif danger==3 and self.cur_act[1]== 0.5:
-            r_alpha = self.R_alpha
-        elif danger==4 and self.cur_act[1] == 0.75:
-            r_alpha = self.R_alpha
-        elif danger==4 and self.cur_act[1] == 1.0:
-            r_alpha = self.R_alpha
-        else:
-            r_alpha = 0
+        r_alpha = self.R_alpha * alpha[0] #+ (alpha==alphaE)*10
         
-
-        # command oriented 
-        r_cmd = self.R_cmd*np.linalg.norm(np.subtract(self.cur_cmd,self.cur_usr_cmd))
-
         # Goal oriented
-        goal_dist = np.linalg.norm(np.subtract(self.goal_pos,self.robot.mb_position))
-        r_goal = self.R_goal*goal_dist
-
+        g_dir = np.subtract(self.goal_pos[0:2],self.robot.mb_position[0:2])
+        g_bear = np.arctan2(g_dir[1],g_dir[0])-self.robot.mb_position[2]
+        g_dist = np.linalg.norm(g_dir)
+        delta_gDist = self.last_gDist - g_dist
+        self.last_gDist = g_dist
+        
         if self.is_goal:
-            r_end = self.R_end
+            r_goal = self.R_end
         else:
-            r_end=0
+            r_goal=self.R_goal*delta_gDist*(np.pi - abs(g_bear))
 
-        self.cur_rewards = [r_safety,r_alpha,r_goal,r_cmd,r_end]
+        self.cur_rewards = [r_safety,r_alpha,r_goal]
         reward = sum(self.cur_rewards)
         
         if False:
             print('------REWARDS-------')
+            print(' - r_goal :', r_goal)
             print(' - r_safe :', r_safety)
             print(' - r_alpha :', r_alpha)
-            print(' - r_goal: ',r_goal)
-            print(' - r_cmd: ',r_cmd)
-            print(' - r_end: ',r_end)
             print('Tot rewards:',reward)
         return reward
 
 
 
 
-    def change_obj_pose(self,eval):
-        
-        r = 4.0
-        if not r%2==0:
-            r_=r+1
-        else:
-            r_=r
-        h=0.3
-        
-        if not eval == None:
-            if  self.n_obstacles ==5:
-                if eval == 0:
-                    new_poses = [[1.0,1.0],[1.0,-1.0],[2.0,0.0],[3.0,-1.0],[3.5,1.0]]
-                elif eval ==1:
-                    new_poses = [[1.0,0.1],[1.0,-0.75],[2.0,0.0],[3.0,0.75],[3.5,-0.75]]
-                    
-            elif self.n_obstacles ==3:
-                if eval == 0:
-                    new_poses = [[2.0,0.1],[3.0,0.0],[4.0,-1.0]]
-                elif eval ==1:
-                    new_poses = [[4.0,0.1],[3.0,0.0],[2.0,-1.0]]
-            self.goal_pos = [r_+1,0.0,h]
-            new_poses.append(self.goal_pos)
+    def change_obj_pose(self,type ='random'):
+        r_x,r_y,h= self.map_size 
+        x_min = 1.0
+        x_max = r_x+1.0
+        y_min = -r_y/2
+        y_max = r_y/2
 
+        if type == 'random':
+            new_poses = [] 
+            for i in range(self.n_obstacles):
+                clear = False
+                while not clear:
+                    obs_i = np.array([random.uniform(x_min, x_max),random.uniform(y_min,y_max)])
+                    clear = all(np.linalg.norm(obs_i-np.array(o)) > self.obs_clear for o in new_poses)
+                new_poses.append(obs_i.tolist())
 
         else:
-            if self.n_obstacles ==3:
-                y = np.random.uniform(low=-1.0, high=1.0, size=3)
-                new_poses = [[2.0,y[0]],[3.0,y[1]],[4.0,y[2]]]
-                self.goal_pos = [6.0,0.0,h]
-                new_poses.append(self.goal_pos)
-
-            elif self.n_obstacles ==5:
-                ax_x = np.linspace(2,4,3)
-                ax_y = np.linspace(-3,3,5)
-                grid = [[x,y] for x in ax_x for y in ax_y]
-                new_poses = random.sample(grid, 5)
-                self.goal_pos = [6.0,0.0,h]
-                new_poses.append(self.goal_pos)
-
-            else:   #for n obstacle
-                ax = np.linspace(-r,r,int(2*r)+1)
-                grid = [[x,y] for x in ax for y in ax]
-                grid.remove([0.0,0.0])
-                new_poses = random.sample(grid, self.n_obstacles+1)
-                self.goal_pos =new_poses[-1]
+            ax_x = np.linspace(x_min,x_max,int(2*(x_max-x_min))+1)
+            ax_y = np.linspace(y_min,y_max,int(2*(y_max-y_min))+1)
+            grid = [[x,y] for x in ax_x for y in ax_y]
+            new_poses = random.sample(grid, self.n_obstacles+1)
+        
+        self.goal_pos = [x_max+1,random.uniform(y_min,y_max)]
+        new_poses.append(self.goal_pos)
             
         ids = self.obs_ids + [self.goal_id]
-
 
         for i in range(len(ids)):
             obj_id =ids[i]
@@ -323,13 +291,6 @@ class Environment():
             send_state_msg(state_msg)
             
 
-        ##change goal position
-        #state_msg = ModelState()
-        #state_msg.model_name = self.goal_id
-        #state_msg.pose.position.x = self.goal_pos[0]
-        #state_msg.pose.position.y = self.goal_pos[1]
-        #state_msg.pose.position.z = h
-        #send_state_msg(state_msg)
 
 
  

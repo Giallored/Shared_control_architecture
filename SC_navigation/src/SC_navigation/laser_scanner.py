@@ -24,7 +24,7 @@ class LaserScanner():
         trimmed_list = np.delete(trimmed_list, range( len(trimmed_list) -offset, len(trimmed_list)),0)
         return trimmed_list
         
-    def get_obs_points(self,max_dist = 3):
+    def get_obs_points(self,max_dist = 1.5):
         msg = self.scan_msg
         #if not len(msg.ranges) == 666:
         #    msg = self.padding(msg)
@@ -51,7 +51,8 @@ class LaserScanner():
     
 
     def preproces(self,ranges,max_dist,max_span=np.pi):
-        new_ranges = np.clip(ranges,0,max_dist)
+        new_ranges = ranges[1::2]
+        new_ranges = np.clip(new_ranges,0,max_dist)
         new_ranges = np.subtract(np.ones(new_ranges.shape)*max_dist,new_ranges)
         ranges2trim = max_span//self.angle_increment
         offset = int((new_ranges.shape[0] - ranges2trim)/2)

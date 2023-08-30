@@ -6,104 +6,108 @@ import torch
 import torch.nn as nn
 from torch.optim import Adam
 from collections import deque
-from RL_agent.model import DwelingQnet
-from RL_agent.ERB import Prioritized_ERB
+from RL_agent.model import DwelingQnet,Qnet
+#from RL_agent.ERB import Prioritized_ERB
+from RL_agent.ERB import PrioritizedReplayBuffer
 from RL_agent.utils import *
 from copy import deepcopy
-from torch.nn import Softmax
-from torch.optim.lr_scheduler import ReduceLROnPlateau,LambdaLR,StepLR
+from torch.optim.lr_scheduler import StepLR
 from statistics import mean
 
 # from ipdb import set_trace as debug
 
 
 class DDQN(object):
-    def __init__(self, n_states, n_frames, action_space, args):
+    def __init__(self, n_states, n_frames, action_space,args, is_training=True):
         self.name = 'ddqn'
         self.n_states = n_states
         self.n_actions= len(action_space)
         self.action_space = action_space
+        print(f'There are {self.n_actions} primitive actions.')
         self.n_frames = n_frames
-        self.lr = args.rate
         
-        # Create Actor and Critic Network
         net_cfg = {
             'hidden1':args.hidden1, 
             'hidden2':args.hidden2
                             }
 
-        #self.network = Qnet(self.n_states,self.n_frames, self.n_actions,**net_cfg)
-        self.network = DwelingQnet(self.n_states,self.n_frames, self.n_actions,**net_cfg)
+        self.network = Qnet(self.n_states,self.n_frames, self.n_actions,**net_cfg)
+        #self.network = DwelingQnet(self.n_states,self.n_frames, self.n_actions,**net_cfg)
         self.target_network = deepcopy(self.network)
 
-        self.optimizer  = Adam(self.network.parameters(), lr=self.lr)
-        self.loss= nn.MSELoss()
 
-        #self.scheduler = ReduceLROnPlateau(self.optimizer, mode='min', factor=0.1, patience=10, threshold=5,
-        #                   threshold_mode='rel', cooldown=0, min_lr=0.00001, eps=1e-08)
-        #self.scheduler.step(1000)
-        self.window_len = 10
-        self.loss_window = deque([1000]*self.window_len,maxlen=self.window_len)
-        self.last_lambda_mean=1000
+        if is_training:
+            #Create replay buffer
+            #self.buffer = Prioritized_ERB(self.n_frames,memory_size = args.rmsize)
+            self.buffer = PrioritizedReplayBuffer(capacity = args.rmsize,
+                                                o_shape = (self.n_frames,313),
+                                                s_shape = (self.n_states,), 
+                                                a_shape=(1,),
+                                                alpha=0.5) 
 
-        #self.lr_scheduler = LambdaLR(optimizer=self.optimizer, lr_lambda=self.lambda_rule)
-        self.lr_scheduler = StepLR(self.optimizer, step_size=15000, gamma=0.1)
+            # Hyper-parameters
+            self.lr = args.rate
+            self.batch_size = args.bsize
+            self.gamma = args.discount
+            self.tau = args.tau
+            self.epsilon_decay=args.epsilon_decay
+            self.epsilon = args.epsilon
+            
+            self.epsilon_min=0.01
+            self.is_training = is_training
+            self.train_iter = 0
+            self.max_iter = args.max_train_iter
 
-        hard_update(self.target_network, self.network) # Make sure target is with the same weight
-        
-        #Create replay buffer
-        self.buffer = Prioritized_ERB(self.n_frames,memory_size = args.rmsize)
-        
-        # Hyper-parameterssigma
-        self.batch_size = args.bsize
-        self.gamma = args.discount
-        self.tau = args.tau
-        self.discount = args.discount
-        self.epsilon_decay=0.999
-        self.epsilon = 0.8
-        self.epsilon_min=0.1
-        self.is_training = args.is_training
-        self.policy_freq=2 #delayed actor update
+            self.sync_frequency=200
+            self.update_frequency = 5
+            #init optimizer
 
+            _optimizer_kwargs = {
+                "lr": self.lr,
+                "weight_decay": 1e-5,
+            }
 
-        self.train_iter = 0
-        self.sync_frequency=200
-        self.max_iter = args.max_train_iter
+            self.optimizer  = Adam(self.network.parameters(), **_optimizer_kwargs)
+            self.lr_scheduler = StepLR(self.optimizer, step_size=1, gamma=0.9)
+            self.scheduler_type = 'StepLR'
+
+            self.epsilon_decay_schedule =lambda n: power_decay_schedule(n, 
+                                                        eps_decay = self.epsilon_decay,
+                                                        eps_decay_min=self.epsilon_min)
+
+            print(f'Hyper parmaeters are:\n - epsilon = {self.epsilon}\n - epsilon decay = {self.epsilon_decay}\n - learning rate = {self.lr}')
+
 
         #initializations
         self.a_t = (1.0,0.0,0.0) # Most recent action
         self.episode_loss=0.
-        
-
         #use_cuda = torch.cuda.is_available()
         self.use_cuda = False
         if self.use_cuda: self.cuda()
     
-    def update_hp(self):
-        if self.epsilon>self.epsilon_min:
-            self.epsilon*=self.epsilon_decay
+    def weighted_MSEloss(self,input,target,weights):
+        return (weights*torch.pow(input-target,2)).mean()
+    
 
     def reset(self,init_obs,init_cmd,init_act):
         self.observations=deque([init_obs]*self.n_frames,maxlen=self.n_frames)
         self.sVars = init_cmd
         self.a_t=np.array(init_act)
         self.episode_loss=0.
-        self.update_hp()
 
-    def e_greedy(self):
-        p = np.random.random()
-        if p < self.epsilon:
-            return 'explore'
-        else:
-            return 'exploit'
+    def get_lr(self):
+        return self.lr_scheduler.get_last_lr()[0]
     
 
-    def random_action(self):
-        action = random.sample(self.action_space,1)[0] #np.random.choice(self.action_space)
+    def random_action(self,aE):
+        if random.random()>0.5:
+            action = random.sample(self.action_space,1)[0] 
+        else:
+            action = aE
         self.a_t = action
         return action
     
-    def select_action(self, s_t):
+    def select_action(self, s_t,aE=(1.0,0.0,0.0)):
         obs_t,cmd_t=s_t
 
         #assemble the state
@@ -114,19 +118,48 @@ class DDQN(object):
         s_tsr = [obs_tsr,cmd_tsr]
 
         q_tsr = self.network(s_tsr)
+        #print('suspect: ',q_tsr)
+        #input()
         a_opt = self.action_space[torch.argmax(q_tsr).item()]
 
         p = np.random.random() #exploration probability
 
 
         if self.is_training and p < self.epsilon:   #exploration
-            action = self.random_action()
+            action = self.random_action(aE)
         else:                                       #exploitation
             action = a_opt
-        
+        if self.is_training: self.epsilon = self.epsilon_decay_schedule(n=self.train_iter)
         self.a_t = action
 
         return action,a_opt
+    
+    def Jtd(self, s, a, r, t, ns, indices, weights ):
+        # compute the 'used' Q for  current state using the 'predictor'
+        q_val= self.network(s)
+        q_val = torch.gather(q_val, 1, a.long()).squeeze(1)
+
+        with torch.no_grad():
+            # compute the 'best' action for the next state using the using the 'predictor'
+            next_q_val = self.network(ns)
+            max_next_q_val = torch.max(next_q_val, 1)[1].unsqueeze(1)
+
+            # compute the 'target' Q using the best act for the next state
+            next_q_target_val = self.target_network(ns)
+            next_q_val = torch.gather(next_q_target_val,1, max_next_q_val).squeeze(1)
+
+        target_q_val = r + (1 - t) * self.gamma * next_q_val
+
+        # loss computation
+        loss = self.weighted_MSEloss(q_val,target_q_val,weights)
+
+        # compute the TD error and update the buffer
+        TD_error = abs(target_q_val.detach() - q_val.detach()).cpu()
+        TD_error = TD_error.numpy()
+        
+        self.buffer.update_priorities(indices,TD_error.reshape(-1))
+        #self.buffer.update_data(abs(TD_error), indices)
+        return loss
     
 
     def compute_loss(self,batch):
@@ -142,53 +175,41 @@ class DDQN(object):
         next_s_tsr = [next_obs_tsr, next_svar_tsr]
 
         a_tsr = torch.LongTensor(a_batch)#.reshape(self.batch_size,-1)
-        r_tsr = to_tensor(r_b,use_cuda=self.use_cuda).squeeze(1)
-        t_tsr = to_tensor(t_b.astype(np.float),use_cuda=self.use_cuda).squeeze(1)
+        r_tsr = to_tensor(r_b,use_cuda=self.use_cuda)#.squeeze(1)
+        t_tsr = to_tensor(t_b.astype(np.float),use_cuda=self.use_cuda)#.squeeze(1)
 
-        # compute target Q
-        with torch.no_grad():
-            next_q = self.target_network.forward(next_s_tsr)
-            next_q_max = torch.max(next_q, dim=-1).values
-            target_q = r_tsr + (1 - t_tsr)*self.gamma*next_q_max
-        
-        # compute Q
-        q = self.network(s_tsr)
-        q = torch.gather(q, 1, a_tsr).squeeze(1)
+        weights_tsr = to_tensor(np.array(weights).astype(np.float),use_cuda=self.use_cuda)#.squeeze(1)
+        J_td = self.Jtd(s_tsr,a_tsr,r_tsr,t_tsr,next_s_tsr,indices, weights_tsr )
 
-        # loss computation
-        loss = self.loss(q,target_q)
+        loss = J_td
         self.episode_loss+=loss.item()
-
-        with torch.no_grad():
-            loss_copy = loss.detach()
-            weight = sum(np.multiply(weights, loss_copy))
-        loss *= weight
-
-        # compute the TD error and update the buffer
-        TD_error = abs(target_q.detach() - q.detach()).numpy()
-        self.buffer.update_data(abs(TD_error), indices)
-
-
         return loss
+    
+
 
     def update_policy(self):
-        
-        batch = self.buffer.sample(self.batch_size)
-        loss = self.compute_loss(batch)
-
-        self.network.zero_grad()
-        loss.backward()
-        self.optimizer.step()
-
+        if self.train_iter % self.update_frequency == 0:
+            batch = self.buffer.sample(self.batch_size)
+            loss = self.compute_loss(batch)
+            self.network.zero_grad()
+            loss.backward()
+            self.optimizer.step()
         if self.train_iter%self.sync_frequency:
             soft_update(self.target_network, self.network, self.tau)
-
         if self.train_iter>self.max_iter:
             rospy.signal_shutdown('Terminate training')
-        
         self.train_iter+=1
-        if len(self.loss_window)== self.window_len:
+
+    def scheduler_step(self,quantity):
+        if self.scheduler_type == 'LambdaLR':
+            self.loss_window.append(quantity)
+            if len(self.loss_window) == self.window_len:
+                self.lr_scheduler.step()
+        elif self.scheduler_type == 'ReduceLROnPlateau':
+            self.lr_scheduler.step(quantity)
+        else:
             self.lr_scheduler.step()
+
 
 
     def eval(self):
@@ -211,18 +232,20 @@ class DDQN(object):
             next_state = [np.array(self.observations),self.sVars]
 
             if save: 
-                a = tuple(self.a_t)
-                self.buffer.store(state=state, action=self.action_space.index(a),
-                              reward=r_t,done=t_t, next_state=next_state )
-            
+                #a = tuple(self.a_t)
+                #self.buffer.store(state=state, action=self.action_space.index(a),
+                #              reward=r_t,done=t_t, next_state=next_state )
+                
+                self.buffer.store(
+                    o = state[0],s = state[1],
+                    a = self.action_space.index(tuple(self.a_t)),
+                    r = r_t,d = t_t,op = next_state[0],
+                    sp = next_state[1])            
 
             
     def load_weights(self, output_dir):
-
         if output_dir is None: return
-        
         ('LOAD MODEL: ',output_dir)
-
         self.network.load_state_dict(
             torch.load('{}/q_network.pkl'.format(output_dir))
         )
@@ -237,12 +260,5 @@ class DDQN(object):
             '{}/q_network.pkl'.format(output_dir)
         )
 
-
-    def lambda_rule(self,epoch):
-        if epoch%10==0:
-            cur_mean = mean(self.loss_window)
-            if cur_mean/self.last_lambda_mean<=0.1:
-                return 0.1
-        return 1
             
 

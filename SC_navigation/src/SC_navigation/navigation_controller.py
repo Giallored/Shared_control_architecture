@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 
 import rospy
-from geometry_msgs.msg import Twist
+from geometry_msgs.msg import Twist,Point
 import numpy as np
 from gazebo_msgs.msg import ContactsState,ModelStates
 import sys
@@ -10,7 +10,7 @@ import random
 
 
 #from gazebo_msgs.msg._ContactState.ContactState import Contact
-from collections import deque
+from collections import deque,namedtuple
 from std_msgs.msg import Bool,String
 from SC_navigation.collision_avoidance import Collision_avoider
 from SC_navigation.trajectory_smoother import Trajectory_smooter
@@ -18,8 +18,12 @@ import laser_geometry.laser_geometry as lg
 from SC_navigation.environment import Environment
 from SC_navigation.utils import *
 from RL_agent.ddqn import DDQN
-
 from sensor_msgs.msg import LaserScan
+import wandb
+
+#roslaunch gazebo_sim tiago_gazebo.launch public_sim:=true end_effector:=pal-gripper world:=static_walls 
+#roslaunch SC_navigation start_training.launch mode:=train env:=prova
+#roslaunch SC_navigation start_training.launch mode:=train model:=prova-run40 epsilon:=0.8
 
 
 
@@ -37,20 +41,21 @@ class Controller():
 
         # folders
         self.output_folder = rospy.get_param('/training/output')
-        self.plot_folder = rospy.get_param('/training/plot_folder')
         self.model2load = rospy.get_param('/controller/model')
         self.model_dir = self.get_folder(self.output_folder)
-        self.plot_dir = self.get_folder(self.plot_folder)
+        self.plot_dir = self.get_folder(rospy.get_param('/training/plot_folder'))
 
 
         #initializations
         self.epoch=0
         self.hyperParam = train_param
-        self.prev_alpha=[1.0,0.0,1.0]
-        self.prev_usr_cmd= [0.,0.]
-        self.prev_cmd = [0.,0.]
-        self.n_state = self.n_agents*self.n_acts + 1 + 2  #usr_cmd + ca_cmd + prev_alpha + cur_vel
-        self.cur_cmds=[0.0]*self.n_acts*self.n_agents
+        self.prev_alpha = [1.0,0.0,0.0]
+        self.cur_alpha = [1.0,0.0,0.0]
+        self.cur_aE = [1.0,0.0,0.0]
+        #self.prev_usr_cmd= [0.,0.]
+        #self.prev_cmd = [0.,0.]
+        self.n_state = self.n_agents*self.n_acts + 3 + 2  #usr_cmd + ca_cmd + prev_alpha + cur_vel
+        #self.cur_cmds=[0.0]*self.n_acts*self.n_agents
 
         #training stuff
         self.episode_reward = 0.0
@@ -59,9 +64,11 @@ class Controller():
         self.max_epochs = self.hyperParam.max_epochs
         self.random_warmup = True
         self.step_warmap= 0
-        self.eval_levels = 1
-        self.eval_lev = None
-        self.to_observe = True
+        
+
+        #validation stuff
+        self.max_eval_iter = 5
+        self.eval_result = (0.0,0.0,0.0)
         
 
         #instatiations
@@ -83,32 +90,45 @@ class Controller():
         
         #self.agent = DDPG(self.n_state,self.hyperParam.n_frame,1,self.hyperParam)
         vals = np.linspace(0.0,1.0,5)
-        
-        primitives = [(x,y,z) for x in vals for y in vals for z in vals if sum((x,y,z))==1.0]
-        self.agent = DDQN(self.n_state,self.hyperParam.n_frame,primitives,self.hyperParam)
+        #self.primitives = [(1,0,0),(0,1,0),(0,0,1)]
+        self.primitives = [(x,y,z) for x in vals for y in vals for z in vals if sum((x,y,z))==1.0]
+        self.agent = DDQN(self.n_state,self.hyperParam.n_frame,self.primitives,self.hyperParam)
         self.pub=rospy.Publisher('mobile_base_controller/cmd_vel', Twist, queue_size=1)
         self.pub_goal=rospy.Publisher('goal',String,queue_size=1)
+        self.pub_a=rospy.Publisher('alpha',Point,queue_size=1)
 
-
-        self.train_plot = Plot(
-            goal=self.env.goal_id,
-            env = self.env.name,
-            parent_dir=self.plot_dir,
-            type = 'train')
+        #expert primitives
+        self.aE = {1:((1.0,0.0,0.0),'U'),
+                2:((1.0,0.0,0.0),'CA'),
+                3:((0.5,0.5,0.0),'CA'),
+                4:((0.25,0.50,0.25),'CA'),
+                5:((0.0,0.75,0.25),'CA')}
     
-
-
     def main(self):
         self.start_time = rospy.get_time()
         if not self.model2load =="":
             self.agent.load_weights(self.model_dir)
-            self.random_warmup = False
-            where = os.path.join(self.plot_dir,'train_dict.pkl')
-            with open(where, 'rb') as handle:
-                dict = pickle.load(handle)
-            self.train_plot.load_dict(dict)
-            self.epoch = self.train_plot.epoch[-1]
-            self.agent.epsilon=0.5
+
+        if self.mode == 'train':
+            wandb.init(project="SharedControlRL",
+            config={
+            "agent": self.agent.name,
+            "environment": "simulator",
+            "map":'static_walls',
+            "model_dir":self.model_dir,
+            "epochs": self.max_epochs,
+            "episode_lenght":self.hyperParam.max_episode_length,
+            "epsilon":self.agent.epsilon,
+            "epsilon_decay":self.agent.epsilon_decay,
+            "n_frames":self.hyperParam.n_frame,
+            "n_primitives":len(self.primitives),
+            "n_state":self.n_state,
+            "warmup_episodes":self.hyperParam.warmup,
+            "ERB_size":self.hyperParam.rmsize,
+            "batch":self.hyperParam.bsize,
+        }
+        )
+        self.epoch = 0
 
         print('Controller node is ready!')
         print(' - Mode: ',self.mode)
@@ -123,9 +143,8 @@ class Controller():
         rospy.Subscriber('usr_cmd_vel',Twist,self.callback)
 
         rospy.on_shutdown(self.shutdownhook)
-
-        #print(f'\n---- EPOCH {self.epoch} -------------------------')
-        #print(f"GOAL:'{self.env.goal_id}' -> {self.env.goal_pos}\n.\n.\n.\n.")
+        print(f'\n---- EPOCH {self.epoch} -------------------------')
+        print(f"GOAL:'{self.env.goal_id}' -> {self.env.goal_pos}\n.\n.\n.\n.\n.\n.\n")
         self.time=self.start_time
         rospy.spin()
 
@@ -141,6 +160,7 @@ class Controller():
             self.control_classic(usr_cmd)
 
         elif self.mode=='train':
+            
             self.agent.is_training = True
             self.control_train(usr_cmd)
 
@@ -155,24 +175,27 @@ class Controller():
 
     def control_classic(self,usr_cmd):
         dt = self.get_time()
-        _,_,done = self.env.make_step()
+        self.env.pause()
+        _,_,done = self.env.make_step(self.cur_alpha,self.cur_alpha)
         if done:
             self.reset()
             print('-'*20+'\n.\n.\n.\n.\n.')
 
-        ca_cmd = self.ca_controller.get_cmd(self.env.cls_obstacle)
-        ts_cmd = self.ts_controller.get_cmd(self.time)
+        #ca_cmd = self.ca_controller.get_cmd(self.env.cls_obstacle)
+        #ts_cmd = self.ts_controller.get_cmd(self.time)
+        #cmds = [usr_cmd,ca_cmd,ts_cmd]
 
-        cmds = [usr_cmd,ca_cmd,ts_cmd]
+        caR_cmd,caT_cmd = self.ca_controller.get_cmd(self.env.cls_obstacle)
+        cmds = [usr_cmd,caR_cmd,caT_cmd]
 
-        primitives = {1:((1.0,0.0,0.0),'U'),
-                      2:((0.75,0.25,0.0),'CA'),
-                      3:((0.5,0.5,0.0),'CA'),
-                      4:((0.25,0.75,0.0),'CA'),
-                      5:((0.0,1.0,0.0),'CA')}
         danger,dist = self.env.danger()
+        alpha,tag = self.aE[danger]
+        self.cur_alpha = alpha
+        #
+        input()
+        self.env.unpause()
         
-        alpha,tag = primitives[danger]
+        
         header = 'STEP ' + str(self.env.step) +' - ' + tag
 
         if not (self.env.is_goal or self.env.is_coll):
@@ -181,6 +204,11 @@ class Controller():
         cmd = np.sum(np.array(alpha)*np.transpose(cmds),axis=-1)
         msg = cmd_to_twist(cmd)
         self.pub.publish(msg)
+        #a_msg = Point()
+        #a_msg.x = alpha[0]*100
+        #a_msg.y = alpha[1]*100
+        #a_msg.z = alpha[2]*100
+        #self.pub_a.publish(a_msg)
 
         self.rate.sleep()
 
@@ -188,19 +216,24 @@ class Controller():
 
 
     def control_train(self,usr_cmd):
-        is_warmup = self.step_warmap <= self.hyperParam.warmup
+        is_warmup = self.step_warmap <= int(self.hyperParam.warmup)
         dt = self.get_time()
 
         self.env.pause()
         #assemble and observe the current state
-        observation,reward,done = self.env.make_step()
-        ca_cmd = self.ca_controller.get_cmd(self.env.cls_obstacle)
-        ts_cmd = self.ts_controller.get_cmd(self.time)
-        cmds = [usr_cmd,ca_cmd,ts_cmd]
+        observation,reward,done = self.env.make_step(self.cur_alpha,self.cur_aE)
+        #ca_cmd = self.ca_controller.get_cmd(self.env.cls_obstacle)
+        #ts_cmd = self.ts_controller.get_cmd(self.time)
+        #cmds = [usr_cmd,ca_cmd,ts_cmd]
+        #state_vars = np.hstack([usr_cmd,ca_cmd,self.prev_alpha, self.env.robot.mb_v,self.env.robot.mb_om])
 
-        state_vars = np.hstack([usr_cmd,ca_cmd,self.prev_alpha, self.env.robot.mb_v,self.env.robot.mb_om])
+        caR_cmd,caT_cmd = self.ca_controller.get_cmd(self.env.cls_obstacle)
+        cmds = [usr_cmd,caR_cmd,caT_cmd]
+        state_vars = np.hstack([usr_cmd,caR_cmd,caT_cmd,self.prev_alpha, self.env.robot.mb_v,self.env.robot.mb_om])
+
         state = [observation,state_vars]
-        self.agent.observe(reward, state, done, save=self.to_observe)
+        to_observe = True #self.env.step>10
+        self.agent.observe(reward, state, done, save=to_observe)
 
         if not is_warmup:
             self.agent.update_policy()
@@ -209,25 +242,32 @@ class Controller():
 
         if done: self.done_routine()
 
+        danger,dist = self.env.danger()
+
+        aE,_= self.aE[danger]
+        self.cur_aE = aE
+
         #get the new action
         if is_warmup:
             self.step_warmap+=1
-            alpha,a_opt = self.agent.select_action(state)
+            alpha,a_opt = self.agent.select_action(state,aE)
             if self.random_warmup:
-                alpha = self.agent.random_action()
+                alpha = self.agent.random_action(aE)
                 header = 'WARMUP (random) - '+ str(self.step_warmap)
             else:
                 header = 'WARMUP (true) - ' + str(self.step_warmap) 
         else:
-            alpha,a_opt = self.agent.select_action(state)
+            alpha,a_opt = self.agent.select_action(state,aE)
             tag='(' + self.mode + ')'
-            header = 'STEP ' + str(self.env.step) +' - ' + tag
+            header = 'STEP ' + str(self.env.step) +' - ' + tag + ' save = '+str(to_observe)
 
-        danger,dist = self.env.danger()
-        if danger==5: alpha =(0.0,1.0,0.0)
+        self.prev_alpha = self.cur_alpha
+        self.cur_alpha = alpha
+
+        #if danger==5: alpha =(0.0,1.0,0.0)
 
         if not (self.env.is_goal or self.env.is_coll):
-            write_console(header,alpha,a_opt,danger,self.agent.lr_scheduler.get_last_lr(),dt)
+            write_console(header,alpha,a_opt,danger,self.agent.get_lr(),dt)
         
         # blend commands and send the msg to the robot
         cmd = np.sum(np.array(alpha)*np.transpose(cmds),axis=-1)
@@ -236,11 +276,14 @@ class Controller():
         self.env.unpause()
         self.pub.publish(msg)
 
+        #a_msg = Point()
+        #a_msg.x = alpha[0]*100
+        #a_msg.y = alpha[1]*100
+        #a_msg.z = alpha[2]*100
+        #self.pub_a.publish(a_msg)
+
         # store actions & plots
-        self.env.update_act(alpha,usr_cmd,cmd)
-        self.plot.store_act(self.time,usr_cmd,ca_cmd,[0,0],alpha,cmd)
-        self.plot.obs_poses[self.env.step]=self.env.pointCloud
-        self.plot.ranges[self.env.step]=observation
+        self.plot.store_act(self.time,usr_cmd,caR_cmd,caT_cmd,alpha,cmd)
 
         self.rate.sleep()
 
@@ -250,24 +293,27 @@ class Controller():
         dt = self.get_time()
 
         #assemble and observe the current state
-        observation,_,done = self.env.make_step()
-        ca_cmd = np.array(self.ca_controller.get_cmd(self.env.cls_obstacle))
-        ts_cmd = self.ts_controller.get_cmd(self.time)
-        cmds = [usr_cmd,ca_cmd,ts_cmd]
-        state_vars = np.hstack([usr_cmd,ca_cmd,self.prev_alpha, self.env.robot.mb_v,self.env.robot.mb_om])
+        observation,reward,done = self.env.make_step(self.cur_alpha)
+        #ts_cmd = self.ts_controller.get_cmd(self.time)
+        #cmds = [usr_cmd,ca_cmd,ts_cmd]
+        caR_cmd,caT_cmd = self.ca_controller.get_cmd(self.env.cls_obstacle)
+        cmds = [usr_cmd,caR_cmd,caT_cmd]
+        state_vars = np.hstack([usr_cmd,caR_cmd,caT_cmd,self.prev_alpha, self.env.robot.mb_v,self.env.robot.mb_om])
         state = [observation,state_vars]
 
         if done: self.done_routine()
 
         #get the new action
         _,alpha = self.agent.select_action(state)
+        self.prev_alpha = self.cur_alpha
+        self.cur_alpha = alpha
         tag='(' + self.mode + ')'
         header = 'STEP ' + str(self.env.step) +' - ' + tag
         danger,dist = self.env.danger()
-        if danger==5: alpha =(0.0,1.0,0.0)
+        #if danger<=2: alpha =(1.0,0.0,0.0)
 
         if not (self.env.is_goal or self.env.is_coll):
-            write_console(header,alpha,alpha,danger,self.agent.lr_scheduler.get_last_lr(),dt)
+            write_console(header,alpha,alpha,danger,'-',dt)
         
         # blend commands and send the msg to the robot
         cmd = np.sum(np.array(alpha)*np.transpose(cmds),axis=-1)
@@ -275,7 +321,7 @@ class Controller():
         self.pub.publish(msg)
 
         # store actions 
-        self.env.update_act(alpha,usr_cmd,cmd)
+        self.episode_reward+=reward
 
         self.rate.sleep()
 
@@ -302,7 +348,7 @@ class Controller():
         print('Shout down...')
 
     def reset(self):
-        self.env.reset(self.eval_lev)
+        self.env.reset('random')
         self.agent.reset(self.env.observation,np.zeros(self.n_state),(1.0,0,0))
         self.ts_controller.reset()
         self.pub_goal.publish(String(self.env.goal_id))
@@ -314,7 +360,6 @@ class Controller():
                 parent_dir=self.plot_dir,
                 type = 'act',
                 name=str(self.epoch)+'_epoch')
-            self.ca_controller.dir = self.plot.dir
 
         self.start_time = rospy.get_time()
     
@@ -330,22 +375,25 @@ class Controller():
 
         self.env.pause()
                   
-        mean_loss = self.agent.episode_loss/self.env.step
-        self.mean_episode_losses.append(mean_loss)
-        self.report()
-    
+            
         if self.mode=='train':
+
+            mean_loss = self.agent.episode_loss/self.env.step
+            self.mean_episode_losses.append(mean_loss)
+            self.report()
+            
             epoch = self.epoch
-            self.epoch+=1
+
             is_warmup = self.step_warmap <= self.hyperParam.warmup
 
-            if mean_loss>0.001: #not evaluating
-                self.train_plot.store_train(self.epoch,self.episode_reward,mean_loss)
-                self.train_plot.save_dict()
-                if mean_loss<=min(self.train_plot.mean_loss):
-                    self.agent.save_model(self.model_dir)
+            #if mean_loss>0.001: #not evaluating
+            #    self.train_plot.store_train(self.epoch,self.episode_reward,mean_loss)
+            #    self.train_plot.save_dict()
+            #    if mean_loss<=min(self.train_plot.mean_loss):
+            #        
 
             if epoch>=self.max_epochs:     #END of TRAINING
+                wandb.finish()
                 self.pub_goal.publish('END')
                 rospy.signal_shutdown('Terminate training')
                 tag = 'END'
@@ -354,31 +402,53 @@ class Controller():
                 tag = '(warm) EPOCH '+str(self.epoch)
 
             else:
+                self.agent.save_model(self.model_dir)
                 self.plot.save_dict()
-                self.agent.update_hp()
+                self.epoch+=1
 
-                if epoch%5==0:
+                g_score = self.eval_result[1]*100
+                c_score = self.eval_result[2]*100
+                r_score = self.eval_result[0]
+                wandb.log({"eval_score": r_score,"goals":g_score,"colls":c_score,
+                        "loss": self.mean_episode_losses[-1], 
+                       "lr":self.agent.get_lr(),"eps":self.agent.epsilon,"beta":self.agent.buffer.beta})
+
+                if epoch>100:
                     self.mode='eval'
-                    self.eval_lev=0
+                    self.eval_result = EvalResults()
+
                     tag = 'EVALUATION 0'
                 else:
                     tag = '(train) EPOCH '+str(self.epoch)
+                
+                
+                
 
 
-        elif self.mode=='eval':   
-            if self.env.is_goal:
-                level = str(self.eval_lev)
-                dir = os.path.join(self.model_dir,'level_'+level)
-                os.makedirs(dir, exist_ok=True)
-                self.agent.save_model(dir)
-            self.eval_lev+=1
-            tag = 'EVALUATION '+str(self.eval_lev)
-            
-            if self.eval_lev > self.eval_levels:
-                self.eval_lev=None
+        elif self.mode=='eval':  
+            self.eval_result.register_result(self.episode_reward,goal=self.env.is_goal,coll=self.env.is_coll) 
+
+            #when the evaluation repetition finish
+            if self.eval_result.iter > self.max_eval_iter:
+                self.eval_result = self.eval_result.get_results()
+
+                #save if the model is fine
+                g_score = self.eval_result[1]*100
+                c_score = self.eval_result[2]*100
+                r_score = self.eval_result[0]
+                if g_score >= 80:
+                    name = 'e'+str(self.epoch)+'_s'+str(r_score)+'_g'+str(g_score)
+                    dir = os.path.join(self.model_dir,name)
+                    os.makedirs(dir, exist_ok=True)
+                    self.agent.save_model(dir)
+                
+                
+
+                #back to training
                 self.mode='train'
-                self.agent.is_training = True
                 tag = '(train) EPOCH '+str(self.epoch)
+            else:
+                tag = 'EVALUATION '+str(self.eval_result.iter)
             
         else:           #this is in general for mode = 'test'
             self.env.pause()
@@ -388,7 +458,8 @@ class Controller():
             if will == 'y':
                 self.plot.save_dict()
             tag = 'TEST'
-            
+        
+        
         self.env.unpause()
         self.reset()
         print(f'\n------------- {tag} -------------------------')

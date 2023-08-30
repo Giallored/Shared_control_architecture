@@ -176,99 +176,86 @@ class Plot():
     def __init__(self,goal,env,parent_dir,name='',type='act'):
         self.name=name
         self.type = type
-        if type == 'act':
-            self.dir = os.path.join(parent_dir,self.name)
-            os.makedirs(self.dir, exist_ok=True)
-            #initializations
-            self.timesteps=[]
-            self.usr_cmd=[]
-            self.ca_cmd=[]
-            self.ts_cmd=[]
-            self.alpha=[]
-            self.cmd=[]
-            self.obs_poses={}
-            self.ranges = {}
-        else:
-            self.dir = parent_dir   
-            self.epochs = []
-            self.rewards = []
-            self.mean_loss = []
+        self.dir = os.path.join(parent_dir,self.name)
+        os.makedirs(self.dir, exist_ok=True)
+
+        #initializations
+        self.timesteps=[]
+        self.usr_cmd=[]
+        self.caR_cmd=[]
+        self.caT_cmd=[]
+        self.alpha=[]
+        self.cmd=[]
         self.goal=goal
         self.env=env
         
     
-    def store_act(self,t,usr_cmd,ca_cmd,ts_cmd,alpha,cmd):
+    def store_act(self,t,usr_cmd,caR_cmd,caT_cmd,alpha,cmd):
         self.timesteps.append(t)
         self.usr_cmd.append(usr_cmd)
-        self.ca_cmd.append(ca_cmd)
-        self.ts_cmd.append(ts_cmd)
+        self.caR_cmd.append(caR_cmd)
+        self.caT_cmd.append(caT_cmd)
         self.alpha.append(alpha)
         self.cmd.append(cmd)
 
-    def store_train(self,epoch,reward,loss):
-        self.epochs.append(epoch)
-        self.rewards.append(reward)
-        self.mean_loss.append(loss)
-       
 
     def close(self):
         plt.close('all')
 
     def save_dict(self):
-        if self.type=='act':
-            dict = {
-                'type':self.type,
-                'timesteps':self.timesteps,
-                'usr_cmd':self.usr_cmd,
-                'ca_cmd':self.ca_cmd,
-                'ts_cmd':self.ts_cmd,
-                'cmd':self.cmd,
-                'alpha':self.alpha,
-                'env':self.env,
-                'goal':self.goal,
-                'obs':self.obs_poses,
-                'ranges':self.ranges
-            }
-            where = os.path.join(self.dir,'plot_dict.pkl')
-
-        else:
-            dict = {
-                'type':self.type,
-                'epoch':self.epochs,
-                'reward':self.rewards,
-                'loss':self.mean_loss
-            }
-            where = os.path.join(self.dir,'train_dict.pkl')
-
+        dict = {
+            'type':self.type,
+            'timesteps':self.timesteps,
+            'usr_cmd':self.usr_cmd,
+            'caR_cmd':self.caR_cmd,
+            'caT_cmd':self.caT_cmd,
+            'cmd':self.cmd,
+            'alpha':self.alpha,
+            'env':self.env,
+            'goal':self.goal,
+        }
+        where = os.path.join(self.dir,'plot_dict.pkl')
         with open(where, 'wb') as handle:
             pickle.dump(dict, handle, protocol=pickle.HIGHEST_PROTOCOL)
         print('Plots saved in: ',where)
-    
 
     def load_dict(self,dict):
-        #where = os.path.join(self.dir,dict_name)
-        #with open(where, 'rb') as handle:
-        #    dict = pickle.load(handle)
         self.type = dict['type']
-        if self.type=='act':
-            self.timesteps=dict['timesteps']
-            self.usr_cmd=dict['usr_cmd']
-            self.ca_cmd=dict['ca_cmd']
-            self.ts_cmd=dict['ts_cmd']
-            self.alpha=dict['alpha']
-            self.cmd=dict['cmd']
-        else:
-            self.epoch = dict['epoch']
-            self.reward = dict['reward']
-            self.loss = dict['loss']
-        
-def clamp_angle(theta):
-    while theta>np.pi:
-        theta-=2*np.pi
-    while theta<-np.pi:
-        theta+=2*np.pi
-    return theta
+        self.timesteps=dict['timesteps']
+        self.usr_cmd=dict['usr_cmd']
+        self.caR_cmd=dict['caR_cmd']
+        self.caT_cmd=dict['caT_cmd']
+        self.alpha=dict['alpha']
+        self.cmd=dict['cmd']
 
+class EvalResults:
+    def __init__(self):
+        self.iter = 0
+        self.scores = []
+        self.goals = 0
+        self.colls = 0
+
+    def register_result(self,score,goal=False,coll=False):
+        self.iter +=1
+        self.scores.append(score)
+        self.goals += goal
+        self.colls += coll
+    
+    def get_results(self):
+        mean_score = round(sum(self.scores)/self.iter)
+        goals =round(self.goals/self.iter,2)
+        colls =round(self.colls/self.iter,2)
+        return mean_score,goals,colls
+
+
+
+
+def clamp_angle(x):
+    x = (x+2*np.pi)%(2*np.pi)
+    if x > np.pi+0.00001:
+        return x -2*np.pi 
+    else:
+        return x
 
 def write_console(header,alpha,a_opt,danger,lr,dt):
     l = [header,

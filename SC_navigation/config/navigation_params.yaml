@@ -2,18 +2,18 @@ training: #namespace
 
     hidden1: 128            #hidden num of first fully connect layer
     hidden2: 128            #hidden num of second fully connect layer 
-    rate: 0.001             #learning rate
-    warmup: 300            #time without training but only filling the replay memory
+    rate: 0.0001             #learning rate
+    warmup: 500            #time without training but only filling the replay memory
     discount: 0.99          
     bsize: 256 # 32             #minibatch size
-    rmsize: 5000 #6000000         #memory size
+    rmsize: 2000          #memory size
     window_length: 1         
     tau: 0.001              #for the soft update
     ou_theta: 0.15          #noise theta
     ou_sigma: 1.2           #noise sigma
     ou_mu: 0                #noise mu
     validate_episodes: 20   #how many episode to perform during validate experiment
-    max_episode_length: 500
+    max_episode_length: 200
     validate_steps: 1000    #how many steps to perform a validate experiment
     output: 'weights'        #where to save the stuff
     plot_folder: 'plots'
@@ -21,36 +21,36 @@ training: #namespace
     debug: 'debug'
     init_w: 0.003
     max_train_iter: 200000      
-    sigma_decay: 0.9999
     sigma:  0.5          #SD of noise
     max_epochs: 500
     seed: -1
     delta_goal: 1.0
     n_frame: 3
+    epsilon: 0.8
+    epsilon_decay: 0.9999
 
 rewards:
-    R_safe: 0 #
-    R_col: -100
-    R_goal: -1 #-100
-    R_end: 0 #100
-    R_alpha: -1 #1 #5 #
-    R_cmd: -1 #-1 #-100
+    R_safe: -3 #
+    R_col: -1000
+    R_goal: 1 #-100
+    R_end: 1000
+    R_alpha: 3 #1 #5 #
   
 
 controller:
     #mode: 'train'           #support option: train/test/direct
-    rate: 30
-    usr_rate: 20
+    rate: 20
+    usr_rate: 10
     verbose: False
     env: 'static' #_complex' #'office_NO_walls'  #'inventory_intensive'        #which is the world you are using
 
 
     #for collision avoidance
-    delta_coll: 1.5
+    delta_coll: 0.4
     theta_coll: 0.785 #pi/4
-    K_lin: 1.5
-    K_ang: 0.5
-    k_ac: 20.0
+    K_lin: 0.5
+    K_ang: 2.0
+    k_ac: 5.0
 
     #tiago
     taigoMBclear: 0.6   #the rad is approx 0.25 and the obstacles are 0.2
