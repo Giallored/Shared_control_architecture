@@ -44,7 +44,7 @@ class Environment():
         self.random_warmup=True
 
         #map stuff
-        self.map_size = [4,3,0.3]
+        self.map_size = [5,3,0.3]
         self.obs_clear = 1.5
         self.n_obstacles = n_obstacles
 
@@ -98,7 +98,7 @@ class Environment():
         self.obj_dict,tiago_vels = get_sim_info(model_msg)
         self.robot.set_MBpose(self.obj_dict['tiago'],tiago_vels)
         self.last_gDist =  np.linalg.norm(np.subtract(self.goal_pos[0:2],self.robot.mb_position[0:2]))
-        print('continue...')
+        #print('continue...')
         self.step=0
         self.is_coll=False
         self.is_goal=False
@@ -152,21 +152,27 @@ class Environment():
                 danger = 4
             else:
                 danger = 5 
-
-        #if dist<1.5 and dist>=0.5:
-        #    if abs(theta)<theta_th:
-        #        danger =3
-        #    else:
-        #        danger =2
-        #elif dist<0.5:
-        #    if abs(theta)<theta_th:   #np.arctan2(self.delta_coll,0.2):
-        #        danger= 5
-        #    else:
-        #        danger= 4
-        #else:
-        #    danger = 1
-
+        
         return danger,dist
+
+
+    def safety_check(self,cmd,dt):
+        X_obs_0 = self.cls_obstacle
+        v = cmd[0]
+        om = cmd[1]
+        theta = om*dt
+        d_X = [v*np.cos(theta)*dt, v*np.sin(theta)*dt]
+        X_obs_1 = np.subtract(X_obs_0,d_X)
+        theta_1 = clamp_angle(np.arctan2(X_obs_1[1],X_obs_1[0]))   
+        dist_1 = np.linalg.norm(X_obs_1)
+
+        if theta_1<=np.arcsin(0.35/np.clip(dist_1,0.35,np.inf)) and dist_1<0.3:
+            #print('NOT SAFE')
+            return False
+        else:
+            return True
+        
+
 
     def stuck_check(self,stamp=True):
         if self.robot.mb_position == self.robot.prev_mb_position:
@@ -197,17 +203,16 @@ class Environment():
             #check for GOAL
             if obj_1==self.goal_id:
                 self.is_goal=True
-                print(f'\nGoal')
+                print(f'*Goal*\n')
             #check for COLLISIONS
             else:
                 self.is_coll=True
-                print(f'\nCollision: {obj_1} - {obj_2}')
+                print(f'*Collision: {obj_1} - {obj_2}*\n')
 
     def callback_scan(self,scan_msg):
         self.laserScanner.scan_msg=scan_msg
         self.observation,self.pointCloud = self.laserScanner.get_obs_points()
         self.cls_obstacle = get_cls_obstacle(self.pointCloud)
-
 
 
 
@@ -224,7 +229,7 @@ class Environment():
             r_safety=0
         
         # arbitration oriented
-        r_alpha = self.R_alpha * alpha[0] #+ (alpha==alphaE)*10
+        r_alpha = self.R_alpha * alpha[0]#+ (alpha==alphaE)*1
         
         # Goal oriented
         g_dir = np.subtract(self.goal_pos[0:2],self.robot.mb_position[0:2])
@@ -276,8 +281,13 @@ class Environment():
         
         self.goal_pos = [x_max+1,random.uniform(y_min,y_max)]
         new_poses.append(self.goal_pos)
-            
+
         ids = self.obs_ids + [self.goal_id]
+        
+
+        #new_poses = [[1.4671088789204418, -0.09558857286171785], [3.4393445430910483, -1.4883161455188647], [2.400304106133938, 0.6591271214720171], [3.6625928010018756, 0.17565946755608364], [1.0475654234293055, -1.2300963785508037], [6.0, -0.11139969122068472]]
+        #ids = ['20x100cm_cylinder', '20x100cm_cylinder_0', '20x100cm_cylinder_1', '20x100cm_cylinder_2', '20x100cm_cylinder_3', 'goal']
+
 
         for i in range(len(ids)):
             obj_id =ids[i]

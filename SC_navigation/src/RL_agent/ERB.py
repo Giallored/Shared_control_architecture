@@ -44,7 +44,7 @@ class UniformReplayBuffer():
         if self.full:
             return self.capacity
         else:
-            return self.idx+1
+            return self.idx
 
     def store(self, o: np.ndarray,
                     s: np.ndarray, 

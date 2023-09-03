@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<launch>
+    <rosparam command="load" file="$(find SC_navigation)/config/navigation_params.yaml" />
+
+    <arg name= "mode" default="test"/> 
+    <arg name= "model" default=""/> 
+    <arg name= "repeats" default="10"/>
+
+    <!-- Launch the training system -->
+    <node pkg="user_pkg" name="user" type="user_AI.py" output="screen"/>
+    
+    <node pkg="SC_navigation" name="controller" type="start_testing.py" output="screen">
+        <param name="mode" type="string" value="$(arg mode)" />
+        <param name="model" type="string" value="$(arg model)"/>
+        <param name="repeats" type="int" value="$(arg repeats)"/>
+    </node>
+
+</launch>

@@ -18,13 +18,13 @@ from statistics import mean
 
 
 class DDQN(object):
-    def __init__(self, n_states, n_frames, action_space,args, is_training=True):
+    def __init__(self, n_states, action_space,args, is_training=True):
         self.name = 'ddqn'
         self.n_states = n_states
         self.n_actions= len(action_space)
         self.action_space = action_space
         print(f'There are {self.n_actions} primitive actions.')
-        self.n_frames = n_frames
+        self.n_frames = args.n_frames
         
         net_cfg = {
             'hidden1':args.hidden1, 
@@ -81,8 +81,8 @@ class DDQN(object):
         #initializations
         self.a_t = (1.0,0.0,0.0) # Most recent action
         self.episode_loss=0.
-        #use_cuda = torch.cuda.is_available()
-        self.use_cuda = False
+        self.use_cuda = torch.cuda.is_available()
+        #self.use_cuda = False
         if self.use_cuda: self.cuda()
     
     def weighted_MSEloss(self,input,target,weights):
@@ -100,7 +100,7 @@ class DDQN(object):
     
 
     def random_action(self,aE):
-        if random.random()>0.5:
+        if random.random()>0.3:
             action = random.sample(self.action_space,1)[0] 
         else:
             action = aE
@@ -174,7 +174,7 @@ class DDQN(object):
         next_svar_tsr = to_tensor(next_svar_b,use_cuda=self.use_cuda)#.reshape(self.batch_size,-1)
         next_s_tsr = [next_obs_tsr, next_svar_tsr]
 
-        a_tsr = torch.LongTensor(a_batch)#.reshape(self.batch_size,-1)
+        a_tsr = to_long_tensor(a_batch,use_cuda=self.use_cuda)#.reshape(self.batch_size,-1)
         r_tsr = to_tensor(r_b,use_cuda=self.use_cuda)#.squeeze(1)
         t_tsr = to_tensor(t_b.astype(np.float),use_cuda=self.use_cuda)#.squeeze(1)
 
@@ -218,10 +218,9 @@ class DDQN(object):
 
     def cuda(self):
         print('put in cuda')
-        self.actor.cuda()
-        self.actor_target.cuda()
-        self.critic.cuda()
-        self.critic_target.cuda()
+        self.network.cuda()
+        self.target_network.cuda()
+
 
     def observe(self, r_t, s_t1, t_t,save=True):
         obs_t1,sVar_t1=s_t1

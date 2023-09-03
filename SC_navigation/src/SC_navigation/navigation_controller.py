@@ -30,7 +30,7 @@ import wandb
 class Controller():
     
     def __init__(self,mode='test',train_param=None,rate=10,verbose=True):
-
+   
         self.mode = mode
         self.env_name = rospy.get_param('/controller/env')   
         self.rate=rospy.Rate(rate) # 10hz        
@@ -92,10 +92,12 @@ class Controller():
         vals = np.linspace(0.0,1.0,5)
         #self.primitives = [(1,0,0),(0,1,0),(0,0,1)]
         self.primitives = [(x,y,z) for x in vals for y in vals for z in vals if sum((x,y,z))==1.0]
-        self.agent = DDQN(self.n_state,self.hyperParam.n_frame,self.primitives,self.hyperParam)
+
+        self.agent = DDQN(self.n_state,self.primitives,self.hyperParam, is_training=(self.mode=='train'))
         self.pub=rospy.Publisher('mobile_base_controller/cmd_vel', Twist, queue_size=1)
         self.pub_goal=rospy.Publisher('goal',String,queue_size=1)
         self.pub_a=rospy.Publisher('alpha',Point,queue_size=1)
+
 
         #expert primitives
         self.aE = {1:((1.0,0.0,0.0),'U'),
@@ -120,7 +122,7 @@ class Controller():
             "episode_lenght":self.hyperParam.max_episode_length,
             "epsilon":self.agent.epsilon,
             "epsilon_decay":self.agent.epsilon_decay,
-            "n_frames":self.hyperParam.n_frame,
+            "n_frames":self.hyperParam.n_frames,
             "n_primitives":len(self.primitives),
             "n_state":self.n_state,
             "warmup_episodes":self.hyperParam.warmup,
@@ -175,7 +177,6 @@ class Controller():
 
     def control_classic(self,usr_cmd):
         dt = self.get_time()
-        self.env.pause()
         _,_,done = self.env.make_step(self.cur_alpha,self.cur_alpha)
         if done:
             self.reset()
@@ -185,14 +186,13 @@ class Controller():
         #ts_cmd = self.ts_controller.get_cmd(self.time)
         #cmds = [usr_cmd,ca_cmd,ts_cmd]
 
-        caR_cmd,caT_cmd = self.ca_controller.get_cmd(self.env.cls_obstacle)
+        caR_cmd,caT_cmd,_ = self.ca_controller.get_cmd(self.env.cls_obstacle)
         cmds = [usr_cmd,caR_cmd,caT_cmd]
 
         danger,dist = self.env.danger()
         alpha,tag = self.aE[danger]
         self.cur_alpha = alpha
         #
-        input()
         self.env.unpause()
         
         
@@ -294,34 +294,43 @@ class Controller():
 
         #assemble and observe the current state
         observation,reward,done = self.env.make_step(self.cur_alpha)
-        #ts_cmd = self.ts_controller.get_cmd(self.time)
-        #cmds = [usr_cmd,ca_cmd,ts_cmd]
-        caR_cmd,caT_cmd = self.ca_controller.get_cmd(self.env.cls_obstacle)
+        self.episode_reward+=reward
+
+        caR_cmd,caT_cmd,cmd_safe = self.ca_controller.get_cmd(self.env.cls_obstacle)
         cmds = [usr_cmd,caR_cmd,caT_cmd]
         state_vars = np.hstack([usr_cmd,caR_cmd,caT_cmd,self.prev_alpha, self.env.robot.mb_v,self.env.robot.mb_om])
         state = [observation,state_vars]
 
         if done: self.done_routine()
+        danger,dist = self.env.danger()
 
         #get the new action
         _,alpha = self.agent.select_action(state)
+        if danger<=2: alpha =(1.0,0.0,0.0)
         self.prev_alpha = self.cur_alpha
         self.cur_alpha = alpha
         tag='(' + self.mode + ')'
         header = 'STEP ' + str(self.env.step) +' - ' + tag
-        danger,dist = self.env.danger()
-        #if danger<=2: alpha =(1.0,0.0,0.0)
 
         if not (self.env.is_goal or self.env.is_coll):
             write_console(header,alpha,alpha,danger,'-',dt)
         
         # blend commands and send the msg to the robot
         cmd = np.sum(np.array(alpha)*np.transpose(cmds),axis=-1)
+
+        #if not self.env.safety_check(cmd,dt):
+        #    cmd = cmd_safe
         msg = cmd_to_twist(cmd)
         self.pub.publish(msg)
 
         # store actions 
         self.episode_reward+=reward
+
+        a_msg = Point()
+        a_msg.x = alpha[0]*100
+        a_msg.y = alpha[1]*100
+        a_msg.z = alpha[2]*100
+        self.pub_a.publish(a_msg)
 
         self.rate.sleep()
 
@@ -348,9 +357,10 @@ class Controller():
         print('Shout down...')
 
     def reset(self):
+        print('RESET',end='\r',flush=True)
         self.env.reset('random')
         self.agent.reset(self.env.observation,np.zeros(self.n_state),(1.0,0,0))
-        self.ts_controller.reset()
+        #self.ts_controller.reset()
         self.pub_goal.publish(String(self.env.goal_id))
         self.episode_reward = 0.
         if not self.plot_dir==None and not self.mode=='eval':
@@ -360,7 +370,6 @@ class Controller():
                 parent_dir=self.plot_dir,
                 type = 'act',
                 name=str(self.epoch)+'_epoch')
-
         self.start_time = rospy.get_time()
     
     def get_time(self):
@@ -413,17 +422,13 @@ class Controller():
                         "loss": self.mean_episode_losses[-1], 
                        "lr":self.agent.get_lr(),"eps":self.agent.epsilon,"beta":self.agent.buffer.beta})
 
-                if epoch>100:
+                if epoch>50:
                     self.mode='eval'
                     self.eval_result = EvalResults()
 
                     tag = 'EVALUATION 0'
                 else:
                     tag = '(train) EPOCH '+str(self.epoch)
-                
-                
-                
-
 
         elif self.mode=='eval':  
             self.eval_result.register_result(self.episode_reward,goal=self.env.is_goal,coll=self.env.is_coll) 
@@ -437,7 +442,7 @@ class Controller():
                 c_score = self.eval_result[2]*100
                 r_score = self.eval_result[0]
                 if g_score >= 80:
-                    name = 'e'+str(self.epoch)+'_s'+str(r_score)+'_g'+str(g_score)
+                    name = 'e'+str(self.epoch)+'_s'+str(r_score)+'_g'+str(int(g_score))
                     dir = os.path.join(self.model_dir,name)
                     os.makedirs(dir, exist_ok=True)
                     self.agent.save_model(dir)
@@ -451,12 +456,13 @@ class Controller():
                 tag = 'EVALUATION '+str(self.eval_result.iter)
             
         else:           #this is in general for mode = 'test'
-            self.env.pause()
-            will = ""
-            while not (will=='y' or will=='n'): 
-                will = str(input('Wanna save? Click "y" for yes or "n" for no:\n -> '))
-            if will == 'y':
-                self.plot.save_dict()
+            #self.env.pause()
+            #will = ""
+            #while not (will=='y' or will=='n'): 
+            #    will = str(input('Wanna save? Click "y" for yes or "n" for no:\n -> '))
+            #if will == 'y':
+            #    self.plot.save_dict()
+            print('Score = ',self.episode_reward)
             tag = 'TEST'
         
         
@@ -469,6 +475,7 @@ class Controller():
 
     
     def report(self):
+        
         print('\n---')
         print(' - mode: ',self.mode)
         #print(' - goal: ',self.env.goal_id)

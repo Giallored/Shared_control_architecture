@@ -161,7 +161,7 @@ include_directories(
 catkin_install_python(PROGRAMS
   src/scripts/controller.py
   src/scripts/start_training.py
-
+  src/scripts/start_testing.py
   DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION}
 )
 

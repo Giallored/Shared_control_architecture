@@ -9,7 +9,7 @@
     <!-- Launch the training system -->
     <node pkg="user_pkg" name="user" type="user_teleop_base.py" output="screen"/>
     
-    <node pkg="SC_navigation" name="controller" type="controller.py">
+    <node pkg="SC_navigation" name="controller" type="start_training.py">
         <param name="mode" type="string" value="$(arg mode)" />
         <param name="model" type="string" value="$(arg model)"/>
     </node>

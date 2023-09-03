@@ -13,6 +13,11 @@ def to_tensor(array, use_cuda = False,volatile=False, requires_grad=False):
     out = Variable(torch.from_numpy(array), volatile=volatile, requires_grad=requires_grad).type(dtype)
     return out
 
+def to_long_tensor(array, use_cuda = False,volatile=False, requires_grad=False):
+    dtype = torch.cuda.LongTensor if use_cuda else torch.LongTensor
+    out = Variable(torch.from_numpy(array), volatile=volatile, requires_grad=requires_grad).type(dtype)
+    return out
+
 
 def soft_update(target, source, tau):
     for target_param, param in zip(target.parameters(), source.parameters()):
@@ -57,7 +62,7 @@ class HyperParams:
         self.seed=hp_dict['seed']
         self.max_epochs=hp_dict['max_epochs']
         self.is_training=is_training
-        self.n_frame=hp_dict['n_frame']
+        self.n_frames=hp_dict['n_frames']
         self.epsilon=hp_dict['epsilon']
         self.epsilon_decay=hp_dict['epsilon_decay']
 

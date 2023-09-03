@@ -25,7 +25,7 @@ training: #namespace
     max_epochs: 500
     seed: -1
     delta_goal: 1.0
-    n_frame: 3
+    n_frames: 3
     epsilon: 0.8
     epsilon_decay: 0.9999
 
@@ -34,12 +34,12 @@ rewards:
     R_col: -1000
     R_goal: 1 #-100
     R_end: 1000
-    R_alpha: 3 #1 #5 #
+    R_alpha: 5 #1 #5 #
   
 
 controller:
     #mode: 'train'           #support option: train/test/direct
-    rate: 20
+    rate: 10
     usr_rate: 10
     verbose: False
     env: 'static' #_complex' #'office_NO_walls'  #'inventory_intensive'        #which is the world you are using
@@ -55,6 +55,8 @@ controller:
     #tiago
     taigoMBclear: 0.6   #the rad is approx 0.25 and the obstacles are 0.2
 
+    n_agents: 3
+    n_acts: 2
     poly_degree: 2
     n_actions: 3
     dt: 0.1

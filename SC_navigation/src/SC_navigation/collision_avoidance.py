@@ -45,9 +45,7 @@ class Collision_avoider():
         if sign==0.0: sign = 1
 
         if dist >=1.5:
-            return [0.0,0.0],[0.0,0.0]
-        
-        
+            return [0.0,0.0],[0.0,0.0],[0.0,0.0]
 
     
         #dU_r=self.d_Ur(X_obs,[0,0])   
@@ -69,6 +67,8 @@ class Collision_avoider():
         v_cmd =  np.clip(v_cmd,self.min_v,self.max_v)
         cmd_r = [v_cmd,om_cmd]
 
+        cmd_safety = [0,om_cmd]
+
         #translational component
         dtheta_t = clamp_angle(theta+np.pi)
         om_cmd = np.clip(self.K_ang*(dtheta_t),self.min_om,self.max_om)
@@ -78,7 +78,8 @@ class Collision_avoider():
         v_cmd = np.clip(v_cmd,self.min_v,self.max_v)
         cmd_t = [v_cmd,om_cmd]
 
-        return cmd_r, cmd_t
+        return cmd_r, cmd_t,cmd_safety
+    
 
 
     def get_cluster(self,sorted_cloud):
