@@ -105,7 +105,8 @@ class User():
             #get the linear command
             if abs(theta)<=self.theta_th:
                 v = self.self.primitive_v
-                om=0.0
+            elif abs(theta)<=np.pi/2:
+                v = 0.5
             else:
                 v = 0.0
             #get the angular command

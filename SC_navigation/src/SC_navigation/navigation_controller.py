@@ -20,16 +20,19 @@ from SC_navigation.utils import *
 from RL_agent.ddqn import DDQN
 from sensor_msgs.msg import LaserScan
 import wandb
+# ws2
+# roslaunch gazebo_sim tiago_gazebo.launch public_sim:=true end_effector:=pal-gripper world:=static_walls 
+# roslaunch SC_navigation start_training.launch mode:=train env:=prova
+# roslaunch SC_navigation start_training.launch mode:=train model:=prova-run40 epsilon:=0.8
 
-#roslaunch gazebo_sim tiago_gazebo.launch public_sim:=true end_effector:=pal-gripper world:=static_walls 
-#roslaunch SC_navigation start_training.launch mode:=train env:=prova
-#roslaunch SC_navigation start_training.launch mode:=train model:=prova-run40 epsilon:=0.8
+#roslaunch SC_navigation start_testing.launch mode:=test model:=new_rewards repeats:=35
+#roslaunch SC_navigation start_training.launch mode:=const env:=single_obs shuffle:=False
 
 
 
 class Controller():
     
-    def __init__(self,mode='test',train_param=None,rate=10,verbose=True):
+    def __init__(self,mode='test',train_param=None,rate=10,shuffle = True,verbose=True):
    
         self.mode = mode
         self.env_name = rospy.get_param('/controller/env')   
@@ -38,6 +41,7 @@ class Controller():
         
         self.n_agents=3
         self.n_acts = 2
+        self.shuffle = shuffle
 
         # folders
         self.output_folder = rospy.get_param('/training/output')
@@ -78,7 +82,6 @@ class Controller():
             K_ang=rospy.get_param('/controller/K_ang'),
             k_r=rospy.get_param('/controller/k_ac'),
             )
-        self.ts_controller = Trajectory_smooter()
         self.tiago = TIAgo(clear =rospy.get_param('/controller/taigoMBclear'))
         self.env = Environment(self.env_name,n_agents=self.n_agents,
                                rate=rate,
@@ -158,7 +161,7 @@ class Controller():
         if self.mode=='direct':
             self.pub.publish(usr_msg)
 
-        elif self.mode=='classic':
+        elif self.mode=='classic' or self.mode =='const':
             self.control_classic(usr_cmd)
 
         elif self.mode=='train':
@@ -177,33 +180,36 @@ class Controller():
 
     def control_classic(self,usr_cmd):
         dt = self.get_time()
-        _,_,done = self.env.make_step(self.cur_alpha,self.cur_alpha)
-        if done:
-            self.reset()
-            print('-'*20+'\n.\n.\n.\n.\n.')
-
-        #ca_cmd = self.ca_controller.get_cmd(self.env.cls_obstacle)
-        #ts_cmd = self.ts_controller.get_cmd(self.time)
-        #cmds = [usr_cmd,ca_cmd,ts_cmd]
+        _,reward,done = self.env.make_step(self.cur_alpha,self.cur_alpha)
+        if done: self.done_routine()
 
         caR_cmd,caT_cmd,_ = self.ca_controller.get_cmd(self.env.cls_obstacle)
         cmds = [usr_cmd,caR_cmd,caT_cmd]
 
-        danger,dist = self.env.danger()
-        alpha,tag = self.aE[danger]
+        danger,dist,bear = self.env.danger()
+        if self.mode=='classic':
+            alpha,tag = self.aE[danger]
+        else:
+            alpha = (1/3,1/3,1/3)
+            tag = '--'
         self.cur_alpha = alpha
         #
         self.env.unpause()
-        
-        
         header = 'STEP ' + str(self.env.step) +' - ' + tag
 
-        if not (self.env.is_goal or self.env.is_coll):
-            write_console(header,alpha, alpha ,danger,'-',dt)
+        #if not (self.env.is_goal or self.env.is_coll):
+        #    write_console(header,alpha, alpha ,danger,'-',dt)
         
         cmd = np.sum(np.array(alpha)*np.transpose(cmds),axis=-1)
         msg = cmd_to_twist(cmd)
         self.pub.publish(msg)
+
+        # store actions 
+        vel = [self.env.robot.mb_v,self.env.robot.mb_om]
+        pos = self.env.robot.mb_position[0:2]
+        self.plot.store_act(self.time,usr_cmd,caR_cmd,caT_cmd,alpha,cmd,vel,pos)
+        self.episode_reward+=reward
+
         #a_msg = Point()
         #a_msg.x = alpha[0]*100
         #a_msg.y = alpha[1]*100
@@ -222,12 +228,10 @@ class Controller():
         self.env.pause()
         #assemble and observe the current state
         observation,reward,done = self.env.make_step(self.cur_alpha,self.cur_aE)
-        #ca_cmd = self.ca_controller.get_cmd(self.env.cls_obstacle)
-        #ts_cmd = self.ts_controller.get_cmd(self.time)
-        #cmds = [usr_cmd,ca_cmd,ts_cmd]
+        
         #state_vars = np.hstack([usr_cmd,ca_cmd,self.prev_alpha, self.env.robot.mb_v,self.env.robot.mb_om])
 
-        caR_cmd,caT_cmd = self.ca_controller.get_cmd(self.env.cls_obstacle)
+        caR_cmd,caT_cmd,_  = self.ca_controller.get_cmd(self.env.cls_obstacle)
         cmds = [usr_cmd,caR_cmd,caT_cmd]
         state_vars = np.hstack([usr_cmd,caR_cmd,caT_cmd,self.prev_alpha, self.env.robot.mb_v,self.env.robot.mb_om])
 
@@ -242,7 +246,7 @@ class Controller():
 
         if done: self.done_routine()
 
-        danger,dist = self.env.danger()
+        danger,dist,bear = self.env.danger()
 
         aE,_= self.aE[danger]
         self.cur_aE = aE
@@ -265,25 +269,29 @@ class Controller():
         self.cur_alpha = alpha
 
         #if danger==5: alpha =(0.0,1.0,0.0)
+        
 
         if not (self.env.is_goal or self.env.is_coll):
             write_console(header,alpha,a_opt,danger,self.agent.get_lr(),dt)
         
         # blend commands and send the msg to the robot
         cmd = np.sum(np.array(alpha)*np.transpose(cmds),axis=-1)
+
         msg = cmd_to_twist(cmd)
 
         self.env.unpause()
         self.pub.publish(msg)
 
-        #a_msg = Point()
-        #a_msg.x = alpha[0]*100
-        #a_msg.y = alpha[1]*100
-        #a_msg.z = alpha[2]*100
-        #self.pub_a.publish(a_msg)
+        a_msg = Point()
+        a_msg.x = alpha[0]*100
+        a_msg.y = alpha[1]*100
+        a_msg.z = alpha[2]*100
+        self.pub_a.publish(a_msg)
 
         # store actions & plots
-        self.plot.store_act(self.time,usr_cmd,caR_cmd,caT_cmd,alpha,cmd)
+        vel = [self.env.robot.mb_v,self.env.robot.mb_om]
+        pos = self.env.robot.mb_position[0:2]
+        self.plot.store_act(self.time,usr_cmd,caR_cmd,caT_cmd,alpha,cmd,vel,pos)
 
         self.rate.sleep()
 
@@ -302,7 +310,8 @@ class Controller():
         state = [observation,state_vars]
 
         if done: self.done_routine()
-        danger,dist = self.env.danger()
+        danger,dist,bear = self.env.danger()
+        
 
         #get the new action
         _,alpha = self.agent.select_action(state)
@@ -311,12 +320,15 @@ class Controller():
         self.cur_alpha = alpha
         tag='(' + self.mode + ')'
         header = 'STEP ' + str(self.env.step) +' - ' + tag
+        
+        
 
-        if not (self.env.is_goal or self.env.is_coll):
-            write_console(header,alpha,alpha,danger,'-',dt)
+        #if not (self.env.is_goal or self.env.is_coll):
+        #    write_console(header,alpha,alpha,danger,self.env.robot.mb_om,dt)
         
         # blend commands and send the msg to the robot
         cmd = np.sum(np.array(alpha)*np.transpose(cmds),axis=-1)
+        
 
         #if not self.env.safety_check(cmd,dt):
         #    cmd = cmd_safe
@@ -324,6 +336,10 @@ class Controller():
         self.pub.publish(msg)
 
         # store actions 
+        vel = [self.env.robot.mb_v,self.env.robot.mb_om]
+        pos = self.env.robot.mb_position[0:2]
+        self.plot.store_act(self.time,usr_cmd,caR_cmd,caT_cmd,alpha,cmd,vel,pos)
+
         self.episode_reward+=reward
 
         a_msg = Point()
@@ -347,29 +363,28 @@ class Controller():
             if self.model2load == "":
                 self.model2load = input('What model to load? (check "weights" folder):\n -> ')
             return os.path.join(parent_dir,self.model2load)
-        elif self.mode =='direct':
-            return get_output_folder(parent_dir,'direct')
         else:
-            return None
-        
+            return get_output_folder(parent_dir,self.mode)
+
 
     def shutdownhook(self):
         print('Shout down...')
 
     def reset(self):
         print('RESET',end='\r',flush=True)
-        self.env.reset('random')
+        self.env.reset('random',shuffle=self.shuffle)
         self.agent.reset(self.env.observation,np.zeros(self.n_state),(1.0,0,0))
-        #self.ts_controller.reset()
         self.pub_goal.publish(String(self.env.goal_id))
         self.episode_reward = 0.
         if not self.plot_dir==None and not self.mode=='eval':
+            print('dir: ',self.plot_dir)
             self.plot = Plot(
                 goal=self.env.goal_id,
                 env = self.env.name,
                 parent_dir=self.plot_dir,
                 type = 'act',
-                name=str(self.epoch)+'_epoch')
+                name=self.env.name)
+            self.plot.store_map(self.env.obstacles_pos,self.env.goal_pos)
         self.start_time = rospy.get_time()
     
     def get_time(self):
@@ -456,12 +471,20 @@ class Controller():
                 tag = 'EVALUATION '+str(self.eval_result.iter)
             
         else:           #this is in general for mode = 'test'
-            #self.env.pause()
-            #will = ""
-            #while not (will=='y' or will=='n'): 
-            #    will = str(input('Wanna save? Click "y" for yes or "n" for no:\n -> '))
-            #if will == 'y':
-            #    self.plot.save_dict()
+
+            self.env.pause()
+            self.plot.save_dict()
+
+            will = ""
+            while not (will=='y' or will=='n'): 
+                #will = str(input('Wanna save? Click "y" for yes or "n" for no:\n -> '))
+                will = str(input('Wanna save? (y or n)'))
+           
+            if will == 'n':
+                self.pub_goal.publish('END')
+                self.env.unpause()
+                self.reset()
+                rospy.signal_shutdown('Terminate training')
             print('Score = ',self.episode_reward)
             tag = 'TEST'
         

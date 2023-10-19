@@ -23,7 +23,7 @@ class Environment():
                  max_steps=100,
                  verbosity=False
                  ):
-        
+        self.last_time = 0
         self.name=name
         self.rate=rate
         self.n_agents=n_agents
@@ -47,6 +47,7 @@ class Environment():
         self.map_size = [5,3,0.3]
         self.obs_clear = 1.5
         self.n_obstacles = n_obstacles
+        self.obstacles_pos = [] 
 
         #reward stuff
         self.delta_coll= delta_coll
@@ -54,6 +55,8 @@ class Environment():
         self.delta_goal = delta_goal
         self.stacked_steps = 0
         self.stacked_th = 5
+
+        self.last_gDist=0
 
         self.R_safe = rospy.get_param('/rewards/R_safe')  # coeff penalizing sloseness to obstacles
         self.R_col = rospy.get_param('/rewards/R_col')  # const penalizing collisions
@@ -87,12 +90,17 @@ class Environment():
                 else:
                     self.obs_ids.append(id)
         self.goal_id = random.sample(self.goal_list,1)[0]
+        self.goal_pos = self.obj_dict[self.goal_id].position
         self.n_obstacles = len(self.obs_ids)
+        for o_id in self.obs_ids:
+            o_pos = self.obj_dict[o_id].position
+            self.obstacles_pos.append(o_pos)
+        
 
 
-    def reset(self,eval_lev):
+    def reset(self,type='random',shuffle=True):
         self.reset_sim()
-        self.change_obj_pose(eval_lev)
+        if shuffle:self.change_obj_pose(type)
         #update model poses
         model_msg = rospy.wait_for_message('gazebo/model_states', ModelStates, timeout=None)
         self.obj_dict,tiago_vels = get_sim_info(model_msg)
@@ -153,7 +161,7 @@ class Environment():
             else:
                 danger = 5 
         
-        return danger,dist
+        return danger,dist,theta
 
 
     def safety_check(self,cmd,dt):
@@ -189,19 +197,20 @@ class Environment():
     # ----------------- UPDATES / CALLBACKS -----------------------------
 
     def callback_robot_state(self,msg):
+        
         self.cnt+=1
-        if self.cnt==10:
-            self.cnt=0
+        if self.cnt%50==0:
             self.obj_dict,tiago_vel = get_sim_info(msg)
             self.goal_pos = self.obj_dict[self.goal_id].position
             self.robot.set_MBpose(self.obj_dict['tiago'],tiago_vel)   
+            
 
     def callback_collision(self,data):
         contact=Contact(data)
         obj_1,obj_2=contact.check_contact()
         if not(obj_1==None) and self.is_coll==False and self.is_goal==False:
             #check for GOAL
-            if obj_1==self.goal_id:
+            if obj_1==self.goal_id or obj_2==self.goal_id:
                 self.is_goal=True
                 print(f'*Goal*\n')
             #check for COLLISIONS
@@ -219,12 +228,25 @@ class Environment():
     def get_reward(self,alpha,alphaE=[0,0,0]):
 
         # safety oriented
-        e = np.linalg.norm(self.cls_obstacle)
+        #e = np.linalg.norm(self.cls_obstacle)
+#
+        #if self.is_coll:
+        #    r_safety = self.R_col
+        #elif e<1.0:
+        #    r_safety=self.R_safe/e
+        #else:
+        #    r_safety=0
+
+        x,y=self.cls_obstacle
+        dist = np.sqrt(x**2+y**2)
 
         if self.is_coll:
             r_safety = self.R_col
-        elif e<1.0:
-            r_safety=self.R_safe/e
+        elif dist<1.0:
+            bear = np.arctan2(y,x)
+            close = (1.0 - dist) / (1.0 - 0.35) +0.001
+            angl = (np.pi - abs(bear))/np.pi
+            r_safety=self.R_safe*angl*close
         else:
             r_safety=0
         
@@ -263,24 +285,24 @@ class Environment():
         x_max = r_x+1.0
         y_min = -r_y/2
         y_max = r_y/2
-
+        
         if type == 'random':
-            new_poses = [] 
+            self.obstacles_pos=[]
             for i in range(self.n_obstacles):
                 clear = False
                 while not clear:
                     obs_i = np.array([random.uniform(x_min, x_max),random.uniform(y_min,y_max)])
-                    clear = all(np.linalg.norm(obs_i-np.array(o)) > self.obs_clear for o in new_poses)
-                new_poses.append(obs_i.tolist())
+                    clear = all(np.linalg.norm(obs_i-np.array(o)) > self.obs_clear for o in self.obstacles_pos)
+                self.obstacles_pos.append(obs_i.tolist()) 
 
-        else:
-            ax_x = np.linspace(x_min,x_max,int(2*(x_max-x_min))+1)
-            ax_y = np.linspace(y_min,y_max,int(2*(y_max-y_min))+1)
-            grid = [[x,y] for x in ax_x for y in ax_y]
-            new_poses = random.sample(grid, self.n_obstacles+1)
+        #else:
+        #    ax_x = np.linspace(x_min,x_max,int(2*(x_max-x_min))+1)
+        #    ax_y = np.linspace(y_min,y_max,int(2*(y_max-y_min))+1)
+        #    grid = [[x,y] for x in ax_x for y in ax_y]
+        #    self.obstacles_pos = random.sample(grid, self.n_obstacles+1)
         
         self.goal_pos = [x_max+1,random.uniform(y_min,y_max)]
-        new_poses.append(self.goal_pos)
+        self.obstacles_pos.append(self.goal_pos)
 
         ids = self.obs_ids + [self.goal_id]
         
@@ -288,11 +310,10 @@ class Environment():
         #new_poses = [[1.4671088789204418, -0.09558857286171785], [3.4393445430910483, -1.4883161455188647], [2.400304106133938, 0.6591271214720171], [3.6625928010018756, 0.17565946755608364], [1.0475654234293055, -1.2300963785508037], [6.0, -0.11139969122068472]]
         #ids = ['20x100cm_cylinder', '20x100cm_cylinder_0', '20x100cm_cylinder_1', '20x100cm_cylinder_2', '20x100cm_cylinder_3', 'goal']
 
-
         for i in range(len(ids)):
             obj_id =ids[i]
             state_msg = ModelState()
-            new_pos = new_poses[i]
+            new_pos = self.obstacles_pos[i]
 
             state_msg.model_name = obj_id
             state_msg.pose.position.x = new_pos[0]

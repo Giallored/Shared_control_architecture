@@ -14,6 +14,7 @@ if __name__ == '__main__':
         
         mode = rospy.get_param('/controller/mode') 
         rate = rospy.get_param('/controller/rate') 
+        shuffle = rospy.get_param('/controller/shuffle') 
         env_name = rospy.get_param('/controller/env') 
         verbose=rospy.get_param('/controller/verbose') 
         
@@ -25,7 +26,7 @@ if __name__ == '__main__':
         
         
         rospy.init_node('navigation_controller', anonymous=True,disable_signals=True)
-        node =Controller(mode=mode,train_param=train_param,rate=rate,verbose=verbose)
+        node =Controller(mode=mode,train_param=train_param,rate=rate,shuffle=shuffle,verbose=verbose)
         
         node.main()
         #rospy.init_node('navigation_controller', anonymous=True)

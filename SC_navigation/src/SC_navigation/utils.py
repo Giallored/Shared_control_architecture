@@ -112,8 +112,9 @@ def get_sim_info(ms_msg):
 
     #tiago vels
     v_abs = Vec3_to_list(vels[ids.index('tiago')].linear)
+    v = np.sqrt(v_abs[0]**2+v_abs[1]**2)
+
     om = vels[ids.index('tiago')].angular.z
-    v = np.linalg.norm(v_abs)
     return dict,[v,om]
 
 
@@ -186,18 +187,28 @@ class Plot():
         self.caT_cmd=[]
         self.alpha=[]
         self.cmd=[]
-        self.goal=goal
+        self.vel = []
+        self.r_pos=[]
+        self.o_pos=[]
+        self.g_pos= [0,0]
         self.env=env
         
     
-    def store_act(self,t,usr_cmd,caR_cmd,caT_cmd,alpha,cmd):
+    def store_act(self,t,usr_cmd,caR_cmd,caT_cmd,alpha,cmd,vel,r_pos):
         self.timesteps.append(t)
         self.usr_cmd.append(usr_cmd)
         self.caR_cmd.append(caR_cmd)
         self.caT_cmd.append(caT_cmd)
         self.alpha.append(alpha)
         self.cmd.append(cmd)
+        self.vel.append(vel)
+        self.r_pos.append(r_pos)
 
+
+    def store_map(self,o_pos,g_pos):
+        print('o_pos: ',o_pos)
+        self.o_pos = o_pos
+        self.g_pos = g_pos
 
     def close(self):
         plt.close('all')
@@ -210,14 +221,19 @@ class Plot():
             'caR_cmd':self.caR_cmd,
             'caT_cmd':self.caT_cmd,
             'cmd':self.cmd,
+            'vel':self.vel,
             'alpha':self.alpha,
+            'r_pos':self.r_pos,
+            'o_pos':self.o_pos,
             'env':self.env,
-            'goal':self.goal,
+            'g_pos':self.g_pos,
         }
         where = os.path.join(self.dir,'plot_dict.pkl')
         with open(where, 'wb') as handle:
             pickle.dump(dict, handle, protocol=pickle.HIGHEST_PROTOCOL)
+        
         print('Plots saved in: ',where)
+        print('Keys: ',dict.keys())
 
     def load_dict(self,dict):
         self.type = dict['type']
@@ -227,6 +243,10 @@ class Plot():
         self.caT_cmd=dict['caT_cmd']
         self.alpha=dict['alpha']
         self.cmd=dict['cmd']
+        self.vel= dict['vel']
+        self.r_pos=dict['r_pos']
+        self.o_pos = dict['o_pos']
+        self.g_pos = dict['g_pos']
 
 class EvalResults:
     def __init__(self):

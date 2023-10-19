@@ -13,7 +13,7 @@ training: #namespace
     ou_sigma: 1.2           #noise sigma
     ou_mu: 0                #noise mu
     validate_episodes: 20   #how many episode to perform during validate experiment
-    max_episode_length: 200
+    max_episode_length: 250 #200
     validate_steps: 1000    #how many steps to perform a validate experiment
     output: 'weights'        #where to save the stuff
     plot_folder: 'plots'
@@ -30,11 +30,11 @@ training: #namespace
     epsilon_decay: 0.9999
 
 rewards:
-    R_safe: -3 #
-    R_col: -1000
-    R_goal: 1 #-100
-    R_end: 1000
-    R_alpha: 5 #1 #5 #
+    R_safe: -3 #-3 #
+    R_col: -500 #-1000
+    R_goal: 3  #1 
+    R_end: 500 #1000
+    R_alpha: 4 #5 
   
 
 controller:
@@ -48,9 +48,9 @@ controller:
     #for collision avoidance
     delta_coll: 0.4
     theta_coll: 0.785 #pi/4
-    K_lin: 0.5
+    K_lin: 2.0 #0.1 #0.5
     K_ang: 2.0
-    k_ac: 5.0
+    k_ac: 0.5 #5.0
 
     #tiago
     taigoMBclear: 0.6   #the rad is approx 0.25 and the obstacles are 0.2

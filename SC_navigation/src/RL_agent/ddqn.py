@@ -81,8 +81,8 @@ class DDQN(object):
         #initializations
         self.a_t = (1.0,0.0,0.0) # Most recent action
         self.episode_loss=0.
-        self.use_cuda = torch.cuda.is_available()
-        #self.use_cuda = False
+        #self.use_cuda = torch.cuda.is_available()
+        self.use_cuda = False
         if self.use_cuda: self.cuda()
     
     def weighted_MSEloss(self,input,target,weights):

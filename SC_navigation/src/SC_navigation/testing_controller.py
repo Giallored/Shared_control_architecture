@@ -29,7 +29,7 @@ Result = namedtuple('Result',field_names=['score','n_steps','alpha_data','ending
 
 class Controller():
     
-    def __init__(self,mode='classic',model_dir = '',test_dir = '',train_param=None,repeats = 10,rate=10,verbose=True):
+    def __init__(self,mode='classic',model_dir = '',test_dir = '',train_param=None,repeats = 10,rate=10,shuffle=True,verbose=True):
 
         self.mode = mode
         self.rate=rospy.Rate(rate) # 10hz        
@@ -43,11 +43,17 @@ class Controller():
         self.results = {}
         dir = os.path.join(self.test_dir,'results.txt')
         self.result_txt =open(dir,"w+")
+        self.model_dir = model_dir
+
+        self.cnt_model = 0
+        self.iter_model = 0
+        self.shuffle = shuffle
+
         if self.mode =='test':
-            self.model_dir = model_dir
             self.model_list = sorted(os.listdir(self.model_dir),reverse=True)
-            self.cnt_model = 0
-            self.iter_model = 0
+        
+        
+        
 
         
         #initializations
@@ -110,7 +116,6 @@ class Controller():
         print(' - Mode: ',self.mode)
         print(' - Directory: ',self.model_dir)
         print(' - Repeats: ',self.repeats)
-        
 
         #-------Setup
         self.reset()
@@ -121,7 +126,8 @@ class Controller():
 
         rospy.on_shutdown(self.shutdownhook)
         #print(f'\n---- MODEL {self.cnt_model} - iter {self.iter_model} -------------------------\n{self.model_name}\n.\n.\n.\n.\n.\n')
-        print(f'\n---- MODEL {self.cnt_model} {self.model_name}')
+        if self.mode =='test':print(f'\n---- MODEL {self.cnt_model} {self.model_name}')
+        else: print('\n'+'-'*20)
         print(f'Iter: {self.iter_model}')
         
         self.time=self.start_time
@@ -139,7 +145,7 @@ class Controller():
 
     def callback(self, usr_msg):
         usr_cmd =np.array(twist_to_cmd(usr_msg)) #direct control
-        if self.mode=='classic':
+        if self.mode=='classic' or self.mode=='const':
             self.control_classic(usr_cmd)
         elif self.mode =='test':
             self.agent.is_training = False
@@ -151,35 +157,35 @@ class Controller():
 
     def control_classic(self,usr_cmd):
         dt = self.get_time()
+        _, reward,done = self.env.make_step(self.cur_alpha,self.cur_alpha)
+        if done: self.done_routine()
+        self.episode_reward+=reward
 
-        self.env.pause()
-
-        _,_,done = self.env.make_step(self.cur_alpha,self.cur_alpha)
-        if done:
-            self.reset()
-            print('-'*20+'\n.\n.\n.\n.\n.')
-
-        caR_cmd,caT_cmd = self.ca_controller.get_cmd(self.env.cls_obstacle)
+        caR_cmd,caT_cmd,_ = self.ca_controller.get_cmd(self.env.cls_obstacle)
         cmds = [usr_cmd,caR_cmd,caT_cmd]
 
-        danger,dist = self.env.danger()
-        alpha,tag = self.aE[danger]
+        danger,dist,bear = self.env.danger()
+        if  self.mode=='classic':
+            alpha,tag = self.aE[danger]
+        else:
+            alpha = (1/3,1/3,1/3)
+            tag = 'CONST'
         self.cur_alpha = alpha
         
-        self.env.unpause()
         header = 'STEP ' + str(self.env.step) +' - ' + tag
 
         #if not (self.env.is_goal or self.env.is_coll):
         #    write_console(header,alpha, alpha ,danger,'-',dt)
         
+        self.episode_data.append(alpha)
         cmd = np.sum(np.array(alpha)*np.transpose(cmds),axis=-1)
         msg = cmd_to_twist(cmd)
         self.pub.publish(msg)
-        #a_msg = Point()
-        #a_msg.x = alpha[0]*100
-        #a_msg.y = alpha[1]*100
-        #a_msg.z = alpha[2]*100
-        #self.pub_a.publish(a_msg)
+        a_msg = Point()
+        a_msg.x = alpha[0]*100
+        a_msg.y = alpha[1]*100
+        a_msg.z = alpha[2]*100
+        self.pub_a.publish(a_msg)
 
         self.rate.sleep()
 
@@ -190,14 +196,14 @@ class Controller():
         #assemble and observe the current state
         observation,reward,done = self.env.make_step(self.cur_alpha)
         self.episode_reward+=reward
-        caR_cmd,caT_cmd = self.ca_controller.get_cmd(self.env.cls_obstacle)
+        caR_cmd,caT_cmd,_ = self.ca_controller.get_cmd(self.env.cls_obstacle)
         cmds = [usr_cmd,caR_cmd,caT_cmd]
         state_vars = np.hstack([usr_cmd,caR_cmd,caT_cmd,self.prev_alpha, self.env.robot.mb_v,self.env.robot.mb_om])
         state = [observation,state_vars]
         
 
         if done: self.done_routine()
-        danger,dist = self.env.danger()
+        danger,dist,bear = self.env.danger()
 
         #get the new action
         _,alpha = self.agent.select_action(state)
@@ -244,7 +250,7 @@ class Controller():
 
     def reset(self):
         #print('RESET',end='\r',flush=True)
-        self.env.reset('random')
+        self.env.reset('random',shuffle=self.shuffle)
         self.agent.reset(self.env.observation,np.zeros(self.n_state),(1.0,0,0))
         self.pub_goal.publish(String(self.env.goal_id))
         self.episode_reward = 0.0
@@ -300,11 +306,28 @@ class Controller():
 
             tag = self.model_name
         else:
+            self.iter_model+=1
             result_i = Result(score=self.episode_reward,
                               n_steps=self.env.step,
                               alpha_data=self.episode_data,
                               ending=ending)
+            self.results[self.iter_model] = result_i
             tag = 'classic'
+            
+            if self.iter_model == self.repeats:
+                #save data from the current tested model
+                file_name = os.path.join(self.test_dir,"result.txt")
+                f= open(file_name,"w+")
+                f.write('PARAMS:\n * seed = None (uses clock)\n * %d iterations\n * max n. steps = 200\n * 0.1 random action by the user\r\n'%self.repeats)
+                success_rate,score = show_results(self.results,
+                                                 modules = ['usr','ca_r','ca_t'],
+                                                 repeats = self.repeats,
+                                                 file_name = f,
+                                                 mode='eval',verbose=True)
+                f.close()
+
+                self.pub_goal.publish('END')
+                rospy.signal_shutdown('Terminate training')
         
         self.env.unpause()
         self.reset()

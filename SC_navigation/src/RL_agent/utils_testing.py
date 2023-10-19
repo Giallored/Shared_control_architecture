@@ -50,7 +50,7 @@ def read_results(results,modules):
     alpha2 =  {'occurrence':[], 'mean': [], 'var':[]}
     alpha3 =  {'occurrence':[], 'mean': [], 'var':[]}
     alphas = np.array([alpha1,alpha2,alpha3])
-
+    print(results.keys())
     for k in results.keys():
         r = results[k]
         tot_steps += r.n_steps
@@ -68,9 +68,8 @@ def read_results(results,modules):
             a['occurrence'].append(stats[m].occorrence/r.n_steps)  
             a['mean'].append(stats[m].mean)
             a['var'].append(stats[m].variance)
-      
     mean_steps = tot_steps/n
-    mean_score = tot_scores/tot_goals
+    mean_score = tot_scores/n #tot_goals
     mean_alpha_res = np.zeros([3,3])
     for i in range(3):
         a = alphas[i]

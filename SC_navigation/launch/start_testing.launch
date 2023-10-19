@@ -6,6 +6,8 @@
     <arg name= "mode" default="test"/> 
     <arg name= "model" default=""/> 
     <arg name= "repeats" default="10"/>
+    <arg name= "shuffle" default="True"/>
+
 
     <!-- Launch the training system -->
     <node pkg="user_pkg" name="user" type="user_AI.py" output="screen"/>
@@ -14,6 +16,7 @@
         <param name="mode" type="string" value="$(arg mode)" />
         <param name="model" type="string" value="$(arg model)"/>
         <param name="repeats" type="int" value="$(arg repeats)"/>
-    </node>
+        <param name= "shuffle" type="bool" value="$(arg shuffle)"/>
 
+    </node>
 </launch>

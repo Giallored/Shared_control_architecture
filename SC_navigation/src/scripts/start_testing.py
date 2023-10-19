@@ -16,6 +16,7 @@ if __name__ == '__main__':
         repeats = rospy.get_param('/controller/repeats') 
         verbose=rospy.get_param('/controller/verbose') 
         parent_dir = rospy.get_param('/training/parent_dir')
+        shuffle = rospy.get_param('controller/shuffle')
 
 
         if mode == 'test':
@@ -24,6 +25,7 @@ if __name__ == '__main__':
             weights_dir = os.path.join(parent_dir,weights_folder)
             model_dir = os.path.join(weights_dir,model)
         else:
+            model = 'classic'
             model_dir = ''
 
         test_dir = os.path.join(parent_dir,'testing')
@@ -39,6 +41,7 @@ if __name__ == '__main__':
                          train_param=train_param,
                          repeats = repeats,
                          rate=rate,
+                         shuffle=shuffle,
                          verbose=verbose)
         
         node.main()
